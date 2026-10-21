@@ -1179,8 +1179,11 @@ installBtn.addEventListener('click', async () => {
 $('update-reload').addEventListener('click', () => location.reload())
 renderInstall()
 
-// Offline support and updates. Left off on a local dev server so edits show on reload; add ?sw to try it there.
-if ('serviceWorker' in navigator && (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname) || new URLSearchParams(location.search).has('sw'))) {
+// Offline support and updates. Only production builds have a service worker (pnpm build, then
+// pnpm preview to try it locally); the dev server always serves the files as they are.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  // Caches the hand-written worker used before the Vite build; the generated one keeps its own.
+  caches.keys().then((keys) => keys.filter((key) => /^app-|^fonts-v1$/.test(key)).forEach((key) => caches.delete(key)))
   addEventListener('load', async () => {
     const hadWorker = Boolean(navigator.serviceWorker.controller)
     // A newer version took over while the app was open: offer to switch rather than reload under the user.

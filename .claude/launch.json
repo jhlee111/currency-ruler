@@ -3,9 +3,19 @@
   "configurations": [
     {
       "name": "currency-ruler",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "5317", "--bind", "127.0.0.1", "--directory", "public"],
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "dev"
+      ],
       "port": 5317
+    },
+    {
+      "name": "currency-ruler-preview",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "preview"
+      ],
+      "port": 5318
     }
   ]
 }

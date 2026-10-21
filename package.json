@@ -1,13 +1,21 @@
 {
   "name": "currency-ruler",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "node scripts/stamp-sw.mjs && wrangler deploy"
+    "dev": "vite --port 5317 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --port 5318 --strictPort",
+    "deploy": "vite build && wrangler deploy",
+    "regions": "node scripts/build-regions.mjs",
+    "icons": "python3 scripts/make-icons.py"
   },
   "devDependencies": {
     "cldr-core": "^48.2.0",
+    "vite": "^8.3.4",
+    "vite-plugin-pwa": "^2.0.0",
     "wrangler": "^4"
   }
 }
