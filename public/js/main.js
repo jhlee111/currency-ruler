@@ -48,8 +48,7 @@ const ctx = els.canvas.getContext('2d')
 const MIN_SPAN = 0.04 // decades on screen, fully zoomed in
 const MAX_SPAN = 7
 const HOME_SPAN = 3.2 // how much shows when the app opens, and after a double tap
-const REACH_DOWN = 1.5 // how far the reading may scroll, in decades from "1 dollar's worth"
-const REACH_UP = 4
+const ENDLESS = 15 // the bottom of the scale: 10^15 is as good as endless, and still exact in a double
 const MAGNET = 10 // px within which a settling reading catches on a labelled tick, at most…
 const MAGNET_SHARE = Math.log10(1.025) // …and never more than ±2.5% of the amount
 const FRICTION = 0.995 // a fling keeps this share of its speed each millisecond
@@ -162,10 +161,15 @@ function home() {
   return { side: code === state.a ? 'a' : 'b', log: Math.round(Math.log10(unitsPerUsd(code))) + 1, step: null }
 }
 
-// Scrolling can't run off into absurd amounts, but a typed amount out there can still scroll back.
+// The smallest amount a currency has, as a log: ¥1 → 0, $0.01 → -2.
+const smallestLog = (code) => -CURRENCIES[code].minor
+
+// The ruler starts at the smaller of the two smallest coins (¥1 against $0.01 → ¥1), in A's log space.
+const rulerStart = () => Math.min(smallestLog(state.a), smallestLog(state.b) + state.R)
+
+// The start of the ruler can be pulled down to the line; below, the scale runs on and on.
 function scrollLimit(from, to) {
-  const dollar = Math.log10(unitsPerUsd(state.a))
-  return clamp(to, Math.min(dollar - REACH_DOWN, from), Math.max(dollar + REACH_UP, from))
+  return clamp(to, Math.min(rulerStart(), from), Math.max(ENDLESS, from))
 }
 
 // ---------- animation
@@ -228,7 +232,7 @@ function metricsFor(w) {
 function readColors() {
   const cs = getComputedStyle(document.documentElement)
   const v = (name) => cs.getPropertyValue(name).trim()
-  return { tick: v('--tick'), ink: v('--scale-ink'), inkSoft: v('--scale-ink-soft') }
+  return { tick: v('--tick'), ink: v('--scale-ink'), inkSoft: v('--scale-ink-soft'), paper: v('--paper'), edge: v('--ruler-edge') }
 }
 
 new ResizeObserver(onResize).observe(els.ruler)
@@ -275,6 +279,7 @@ function draw() {
   if (state.layout === 'middle') drawSpine()
   drawSide(ticksA, 0, false, CURRENCIES[state.a], k, lo)
   drawSide(ticksB, state.R, true, CURRENCIES[state.b], k, lo)
+  drawRulerStart(lo, k)
   frame = { labelsA: ticksA.filter((t) => t.label), labelsB: ticksB.filter((t) => t.label) }
 }
 
@@ -282,6 +287,8 @@ function draw() {
 // Middle: ticks grow out from the centre line with the amounts outside them.
 function drawSide(ticks, offset, right, cur, k, lo) {
   const { w, h, dpr } = size
+  // Nothing smaller than the currency's smallest coin exists, so that end of the scale stays blank.
+  ticks = ticks.filter((t) => t.log >= -cur.minor - 1e-9)
   const middle = state.layout === 'middle'
   const origin = middle ? w / 2 : right ? w : 0
   const dir = (right ? -1 : 1) * (middle ? -1 : 1)
@@ -313,6 +320,18 @@ function drawSide(ticks, offset, right, cur, k, lo) {
     ctx.fillStyle = big ? colors.ink : colors.inkSoft
     ctx.fillText(tickLabel(t.m, t.n, cur), x, (y + 0.5) * dpr)
   }
+}
+
+// Above its start the ruler simply ends: the page shows through, edged like the end of a stick.
+function drawRulerStart(lo, k) {
+  const { w, dpr } = size
+  const y = (rulerStart() - lo) * k
+  if (y <= 0) return
+  const yd = Math.round(y * dpr)
+  ctx.fillStyle = colors.paper
+  ctx.fillRect(0, 0, w * dpr, yd)
+  ctx.fillStyle = colors.edge
+  ctx.fillRect(0, yd - Math.max(1, Math.round(dpr)), w * dpr, Math.max(1, Math.round(dpr)))
 }
 
 function drawSpine() {

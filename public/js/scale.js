@@ -115,6 +115,12 @@ function num(decimals) {
   return formatters.get(decimals)
 }
 
+const upToFormatters = new Map()
+function upTo(decimals) {
+  if (!upToFormatters.has(decimals)) upToFormatters.set(decimals, new Intl.NumberFormat('en-US', { maximumFractionDigits: decimals }))
+  return upToFormatters.get(decimals)
+}
+
 function trailingZeros(m) {
   let z = 0
   while (z < 3 && m % 10 === 0) {
@@ -141,13 +147,17 @@ export function tickLabel(m, n, cur) {
 /** A reading. `step` is the precision it was snapped to, if any. */
 export function formatAmount(v, cur, step) {
   if (!(v > 0) || !Number.isFinite(v)) return ''
+  if (v >= 1e9) return cur.symbol + compact.format(v) // ¥1.2B, $3.4T
   let d
   if (step) {
     d = Math.max(0, -Math.floor(Math.log10(step) + 1e-9))
+    if (cur.minor === 0) return cur.symbol + upTo(Math.min(d, 8)).format(v) // ¥12, not ¥12.0
     if (d === 1 && cur.minor === 2) d = 2
   } else {
     const sig = Math.max(0, 1 - Math.floor(Math.log10(v)))
-    d = cur.minor === 0 ? (v < 10 ? sig : 0) : Math.max(cur.minor, sig)
+    // Small amounts of a currency without decimals keep only the digits they need: ¥1, ¥6.3.
+    if (cur.minor === 0) return cur.symbol + upTo(v < 10 ? Math.min(sig, 8) : 0).format(v)
+    d = Math.max(cur.minor, sig)
   }
   return cur.symbol + num(Math.min(d, 8)).format(v)
 }
@@ -161,7 +171,7 @@ export function niceStep(x) {
   return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p
 }
 
-const MULTIPLIERS = { k: 1e3, m: 1e6, b: 1e9, 천: 1e3, 만: 1e4, 억: 1e8 }
+const MULTIPLIERS = { k: 1e3, m: 1e6, b: 1e9, t: 1e12, 천: 1e3, 만: 1e4, 억: 1e8, 조: 1e12 }
 
 /** Accepts "3,450", "¥3450", "3.2k", "5만". Returns NaN when it can't read a positive amount. */
 export function parseAmount(text, symbol = '') {
@@ -171,7 +181,7 @@ export function parseAmount(text, symbol = '') {
     .replace(/[\s,_$¥₩€£฿≈~]/g, '')
     .replace(/^[a-z]{1,3}(?=[\d.])/i, '')
     .toLowerCase()
-  const match = s.match(/^(\d+(?:\.\d*)?|\.\d+)([kmb천만억])?$/)
+  const match = s.match(/^(\d+(?:\.\d*)?|\.\d+)([kmbt천만억조])?$/)
   if (!match) return NaN
   const v = parseFloat(match[1]) * (match[2] ? MULTIPLIERS[match[2]] : 1)
   return v > 0 ? v : NaN
