@@ -37,6 +37,8 @@
       <div class="glass" id="glass">
         <span class="band" aria-hidden="true"></span>
         <span class="hair" aria-hidden="true"></span>
+        <span class="clip clip-l" aria-hidden="true"></span>
+        <span class="clip clip-r" aria-hidden="true"></span>
         <input class="pill pill-a" id="amt-a" inputmode="decimal" autocomplete="off" spellcheck="false" enterkeyhint="done">
         <input class="pill pill-b" id="amt-b" inputmode="decimal" autocomplete="off" spellcheck="false" enterkeyhint="done">
       </div>
@@ -80,18 +82,27 @@
   <dialog class="sheet picker" id="picker" aria-labelledby="picker-title">
     <div class="picker-body">
       <header class="sheet-head">
-        <h2 id="picker-title">Left-hand currency</h2>
+        <h2 id="picker-title">New ruler</h2>
         <form method="dialog">
           <button class="icon-btn" value="close" aria-label="Close currency list">
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 4.5l9 9m0-9-9 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           </button>
         </form>
       </header>
+      <!-- The ruler being set up, laid out like the top of the big one: pick two, turn it around. -->
+      <div class="pair" id="pair">
+        <button type="button" class="tag slot" id="slot-a"></button>
+        <button type="button" class="tag tag-round swap" id="pair-swap" aria-label="Turn the ruler around" title="Turn around"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2.5 6h12m0 0-3-3m3 3-3 3M15.5 12h-12m0 0 3-3m-3 3 3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button type="button" class="tag slot" id="slot-b"></button>
+      </div>
       <label class="picker-search">
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input type="search" id="picker-q" placeholder="Country, currency or code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search" aria-label="Search currencies" aria-controls="picker-list">
       </label>
       <div class="picker-list" id="picker-list"></div>
+      <div class="picker-actions" id="picker-actions" hidden>
+        <button type="button" class="tool wide danger" id="pair-remove">Remove ruler</button>
+      </div>
     </div>
   </dialog>
 
@@ -140,25 +151,6 @@
         <p class="rate-note">Point a phone’s camera at the code to open the ruler.</p>
         <button type="button" class="tool wide primary" id="share-send">Share link…</button>
         <button type="button" class="tool wide" id="share-copy">Copy link</button>
-      </div>
-    </form>
-  </dialog>
-  <dialog class="sheet" id="ruler-editor" aria-labelledby="editor-title">
-    <form method="dialog">
-      <header class="sheet-head">
-        <h2 id="editor-title">Ruler</h2>
-        <button class="icon-btn" value="close" aria-label="Close ruler">
-          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 4.5l9 9m0-9-9 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        </button>
-      </header>
-      <div class="sheet-body">
-        <div class="editor-pair">
-          <button type="button" class="tool editor-cur" id="edit-a" aria-haspopup="dialog"><span class="editor-side" id="edit-side-a">Left</span><span class="editor-name" id="edit-name-a"></span></button>
-          <button type="button" class="icon-btn" id="edit-swap" aria-label="Swap sides" title="Swap sides"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2.5 6h12m0 0-3-3m3 3-3 3M15.5 12h-12m0 0 3-3m-3 3 3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          <button type="button" class="tool editor-cur" id="edit-b" aria-haspopup="dialog"><span class="editor-side" id="edit-side-b">Right</span><span class="editor-name" id="edit-name-b"></span></button>
-        </div>
-        <p class="rate-line" id="edit-rate"></p>
-        <button type="button" class="tool wide danger" id="edit-remove">Remove this ruler</button>
       </div>
     </form>
   </dialog>

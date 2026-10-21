@@ -31,8 +31,9 @@
   --chip-edge: #ecb4a0;
   --glass-ink: #3d170b;
   --glass-text: #fff4ee;
-  --glass-band: rgb(255 255 255 / 0.5);
   --glass-edge: rgb(74 28 14 / 0.14);
+  --hairline: #c8261b;
+  --clip: linear-gradient(90deg, #5d6167, #c9ccd1 38%, #9a9ea4 62%, #55595f);
   color-scheme: light;
 }
 
@@ -62,8 +63,9 @@
   --chip-edge: #5e3628;
   --glass-ink: #fbe8de;
   --glass-text: #2a1209;
-  --glass-band: rgb(255 236 226 / 0.07);
   --glass-edge: rgb(251 232 222 / 0.2);
+  --hairline: #ff6a55;
+  --clip: linear-gradient(90deg, #3d4045, #9a9ea5 38%, #6f7379 62%, #34373b);
   color-scheme: dark;
 }
 
@@ -103,8 +105,10 @@
   --chip-edge: #a57843;
   --glass-ink: #2a1d14;
   --glass-text: #f2e3cc;
-  --glass-band: rgb(255 248 235 / 0.35);
   --glass-edge: rgb(42 29 20 / 0.3);
+  --hairline: #b3221a;
+  /* Brass, as on an old wooden slide rule. */
+  --clip: linear-gradient(90deg, #6e5220, #e2c47c 38%, #b48c42 62%, #5f461b);
   color-scheme: dark;
 }
 
@@ -177,23 +181,41 @@ button, input, select { font: inherit; color: inherit; }
   height: 0;
   pointer-events: none;
 }
+/* It's a slide rule's cursor: a clear window lying just above the scale, a fine red hairline
+   scribed on it, and a clip at each edge holding it to the rule. */
 .glass .band {
   position: absolute;
   left: 0;
   right: 0;
-  top: -21px;
-  height: 42px;
-  border-block: 1px solid var(--glass-edge);
-  background: var(--glass-band);
+  top: -30px;
+  height: 60px;
+  border-top: 1px solid rgb(255 255 255 / 0.55);
+  border-bottom: 1px solid var(--glass-edge);
+  /* Clear glass: only a sheen, so the scale reads crisply through it. */
+  background: linear-gradient(to bottom, rgb(255 255 255 / 0.24), rgb(255 255 255 / 0.06) 40%, rgb(255 255 255 / 0.02) 60%, rgb(255 255 255 / 0.1));
+  box-shadow: 0 6px 14px rgb(0 0 0 / 0.16), 0 1px 2px rgb(0 0 0 / 0.12);
 }
 .glass .hair {
   position: absolute;
   left: 0;
   right: 0;
-  top: -0.75px;
-  height: 1.5px;
-  background: var(--glass-ink);
+  top: -0.6px;
+  height: 1.2px;
+  background: var(--hairline);
+  box-shadow: 0 1px 1px rgb(0 0 0 / 0.18); /* scribed on the underside, it shadows the scale */
 }
+.glass .clip {
+  position: absolute;
+  top: -36px;
+  width: 9px;
+  height: 72px;
+  background:
+    repeating-linear-gradient(to bottom, rgb(0 0 0 / 0.18) 0 1px, transparent 1px 4px) center / 100% 40% no-repeat,
+    var(--clip);
+  box-shadow: 0 3px 8px rgb(0 0 0 / 0.3);
+}
+.glass .clip-l { left: 0; border-radius: 0 4px 4px 0; }
+.glass .clip-r { right: 0; border-radius: 4px 0 0 4px; }
 
 /* The amounts on the line are the converter: tap one to type a price. 16px+ keeps iOS from zooming. */
 .pill {
@@ -444,6 +466,32 @@ button, input, select { font: inherit; color: inherit; }
 .picker-body { display: flex; flex-direction: column; height: 100%; }
 .picker-body .sheet-head form { display: contents; }
 
+/* The ruler being set up: a strip of ruler with its two places, like the top of the big one. */
+.pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 20px 12px;
+  padding: 10px;
+  border: 1px solid var(--ruler-edge);
+  border-radius: 12px;
+  background-color: var(--ruler);
+  background-image: var(--ruler-texture);
+}
+.pair .slot { flex: 1; max-width: none; justify-content: center; }
+.slot.empty {
+  border-style: dashed;
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--scale-ink-soft);
+}
+.slot.next { border-color: var(--tick); border-width: 1.5px; }
+.pair .swap:disabled { opacity: 0.4; cursor: default; }
+
+.picker-actions { padding: 10px 20px 14px; border-top: 1px solid var(--line); }
+.picker-actions[hidden] { display: none; }
+
 .picker-search {
   display: flex;
   align-items: center;
@@ -497,7 +545,8 @@ button, input, select { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .pick-row:active { background: var(--hover); }
-.pick-row[aria-current="true"] .pick-name::after { content: " ✓"; color: var(--accent-text); }
+.pick-row[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.pick-row[aria-pressed="true"] .pick-rate::after { content: "✓"; color: var(--accent-text); font-size: 17px; font-weight: 700; }
 .pick-row:disabled { cursor: default; opacity: 0.55; }
 .pick-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pick-name { margin: 0; font-size: 15px; font-weight: 700; color: var(--ink); }
@@ -820,25 +869,7 @@ button, input, select { font: inherit; color: inherit; }
 .mini-add::before,
 .mini-add::after { content: none; }
 
-.editor-pair {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-.editor-cur {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  height: auto;
-  min-height: 62px;
-  padding: 8px 12px;
-  text-align: left;
-}
-.editor-side { font-size: 12px; color: var(--muted); }
-.editor-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 700; }
-.tool.danger { margin-top: 8px; color: var(--invalid); border-color: color-mix(in srgb, var(--invalid) 45%, transparent); }
+.tool.danger { color: var(--invalid); border-color: color-mix(in srgb, var(--invalid) 45%, transparent); }
 
 /* ---------- settings */
 

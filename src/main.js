@@ -46,16 +46,12 @@ const els = {
   dots: $('dots'),
   rulerList: $('ruler-list'),
   addRuler: $('add-ruler'),
-  editor: $('ruler-editor'),
-  editA: $('edit-a'),
-  editB: $('edit-b'),
-  editNameA: $('edit-name-a'),
-  editNameB: $('edit-name-b'),
-  editSideA: $('edit-side-a'),
-  editSideB: $('edit-side-b'),
-  editSwap: $('edit-swap'),
-  editRate: $('edit-rate'),
-  editRemove: $('edit-remove'),
+  pair: $('pair'),
+  slotA: $('slot-a'),
+  slotB: $('slot-b'),
+  pairSwap: $('pair-swap'),
+  pairRemove: $('pair-remove'),
+  pickerActions: $('picker-actions'),
 }
 let ctx = els.canvas.getContext('2d') // swapped for a ghost card's while one is painted
 
@@ -1069,7 +1065,7 @@ function makeGhost() {
   el.hidden = true
   el.setAttribute('aria-hidden', 'true')
   el.innerHTML =
-    '<canvas></canvas><div class="glass"><span class="band"></span><span class="hair"></span><span class="pill pill-a"></span><span class="pill pill-b"></span></div>' +
+    '<canvas></canvas><div class="glass"><span class="band"></span><span class="hair"></span><span class="clip clip-l"></span><span class="clip clip-r"></span><span class="pill pill-a"></span><span class="pill pill-b"></span></div>' +
     '<div class="plate"><span class="tag"></span><span class="tag"></span></div>' +
     '<div class="slot-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span>New ruler</span></div>'
   els.ruler.before(el)
@@ -1208,7 +1204,7 @@ function releaseDeck(v, g) {
     paintGhost(ghosts[dir], neighbour(dir))
     buzz(g.pointerType, 10)
   } else if (ghosts[toward].holds === 'add' && Math.abs(deck.x) > ADD_PULL) {
-    startAdding()
+    openRulerSheet()
   }
   deck.v = clamp(v, -4, 4)
   deck.liftFrom = deck.lift
@@ -1312,24 +1308,24 @@ function markDot(i) {
 
 els.swap.addEventListener('click', swapSides)
 
-// Changes one side of the ruler in hand.
-function setCurrency(which, code) {
-  const other = which === 'a' ? 'b' : 'a'
-  if (code === state[which] || code === state[other]) return
-  if (!canPair(which === 'a' ? code : state.a, which === 'b' ? code : state.b)) return
-  // Keep the amount on the unchanged side; the changed side re-reads against it.
-  const pa = cursorPosA()
-  const keep = valueAt(other === 'a' ? pa : pa - state.R, other)
-  const step = state.cursor.side === other ? state.cursor.step : null
-  stopMotion()
-  state[which] = code
-  settleR()
-  state.cursor = { side: other, pos: posOf(keep, other), step }
-  storeRuler()
-  syncCurrencyUi()
+// Puts currencies a and b on ruler i of the set. On the ruler in hand the change shows at once,
+// and the price on the line stays in whichever currency remains.
+function setRuler(i, a, b) {
+  const r = state.rulers[i]
+  if (!r || (r.a === a && r.b === b) || !canPair(a, b)) return
+  Object.assign(r, { a, b })
+  if (i === state.current) {
+    const p = price()
+    stopMotion()
+    Object.assign(state, { a, b })
+    settleR()
+    state.cursor = carry(p)
+    syncCurrencyUi()
+    requestRender()
+    if (!reduceMotion.matches) els.canvas.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' })
+  }
   savePrefs()
-  requestRender()
-  if (!reduceMotion.matches) els.canvas.animate([{ opacity: 0.15 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' })
+  renderRulers()
 }
 
 let flipping = false
@@ -1370,20 +1366,23 @@ function storeRuler() {
   renderRulers()
 }
 
-// ---------- currency picker
+// ---------- setting up a ruler
 //
-// Every currency is here, but only for setting up rulers in Settings; using the rulers is
-// just swiping between the few a trip needs.
+// A ruler is two currencies, so setting one up is picking two. The sheet shows the ruler taking
+// shape at the top, laid out like the top of the big one, with every currency below: tap one to
+// put it on, tap it again to take it off, and with two on it's done. ⇄ turns it around. Every
+// currency is here, but only for setting up rulers; using them is just swiping between the few
+// a trip needs.
 
-// What the picker is choosing: one side of a ruler. `here` is that side's currency now (none
-// for a new ruler), `other` the opposite side's (none when choosing the first side). Choosing
-// `other` swaps the sides when `canSwap`; otherwise it can't be chosen.
-let picking = { title: '', here: null, other: null, canSwap: false, choose() {} }
+// The ruler on the sheet: a new one (i is null) or ruler i of the set, and what's on it so far.
+let draft = { i: null, a: null, b: null }
+let finishing = 0 // the beat between the second pick and the sheet closing
 
 const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 const pairNumber = (v) => new Intl.NumberFormat('en-US', { maximumFractionDigits: v >= 100 ? 0 : v >= 10 ? 1 : 2 }).format(v)
+const PLUS = '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
 
-// "₫25,858 = $1": the row's currency against the other side of the ruler, 1 of whichever is worth more.
+// "₫25,858 = $1": a currency against the other one on the ruler, 1 of whichever is worth more.
 function pairText(code, other) {
   const rates = ratesFor(code, other)
   const x = rates[code] / rates[other]
@@ -1392,27 +1391,36 @@ function pairText(code, other) {
   return x >= 1 ? `${C}${pairNumber(x)} = ${O}1` : `${C}1 = ${O}${pairNumber(1 / x)}`
 }
 
+const onDraft = (code) => code === draft.a || code === draft.b
+// The currency on the ruler when it has just one; the others are priced against it.
+const loneCurrency = () => (draft.a && !draft.b ? draft.a : draft.b && !draft.a ? draft.b : null)
+
 function pickerRow(code) {
-  const { here, other, canSwap } = picking
   const c = CURRENCIES[code]
-  const usable = code === other ? canSwap : other ? canPair(code, other) : hasRate(code)
+  const on = onDraft(code)
+  const lone = loneCurrency()
+  const usable = on || (lone ? canPair(code, lone) : hasRate(code))
   const symbol = c.symbol.trim() === code ? '' : ` · ${c.symbol.trim()}`
   const place = c.regionNames.length ? ` · ${c.regionNames[0]}${c.regionNames.length > 1 ? ` +${c.regionNames.length - 1}` : ''}` : ''
   // Without market rates on the device yet, most currencies wait for a connection; once they're
   // here, a currency still missing simply isn't offered by any source.
   const missing = state.sources.market ? 'No rate available' : 'Needs a connection'
-  const right =
-    code === here ? 'On the ruler' : code === other ? (canSwap ? 'Swap sides' : 'Other side') : !usable ? missing : other ? pairText(code, other) : ''
-  return `<li><button type="button" class="pick-row" data-code="${code}"${usable ? '' : ' disabled'}${code === here ? ' aria-current="true"' : ''}>
+  const right = on ? '' : !usable ? missing : lone ? pairText(code, lone) : ''
+  return `<li><button type="button" class="pick-row" data-code="${code}" aria-pressed="${on}"${usable ? '' : ' disabled'}>
     <span class="pick-main"><span class="pick-name">${escapeHtml(c.name)}</span><span class="pick-sub">${escapeHtml(code + symbol + place)}</span></span>
     <span class="pick-rate">${escapeHtml(right)}</span></button></li>`
 }
 
 const pickerSection = (title, codes) => `<h3 class="pick-sec">${escapeHtml(title)}</h3><ul class="pick-list">${codes.map(pickerRow).join('')}</ul>`
 
+// Close at hand above the full list: what's on this ruler, what's on the others, recent picks.
+function nearCodes() {
+  const codes = [draft.a, draft.b, ...state.rulers.flatMap((r) => [r.a, r.b]), ...state.recent].filter(Boolean)
+  return [...new Set(codes)].slice(0, 8)
+}
+
 function renderPicker() {
   const query = els.pickerQ.value.trim()
-  const onRuler = [picking.here, picking.other].filter(Boolean)
   let html
   if (query) {
     const hits = searchCurrencies(query)
@@ -1420,25 +1428,40 @@ function renderPicker() {
       ? pickerSection(`${hits.length} result${hits.length === 1 ? '' : 's'}`, hits)
       : `<div class="pick-empty"><p class="pick-name">No currency matches “${escapeHtml(query)}”</p><p class="pick-sub">Try a code like VND or a country like Vietnam.</p></div>`
   } else {
-    const recent = state.recent.filter((code) => !onRuler.includes(code))
-    html =
-      (onRuler.length ? pickerSection('On the ruler', onRuler) : '') +
-      (recent.length ? pickerSection('Recent', recent) : '') +
-      pickerSection('All currencies', BY_NAME)
+    html = `<ul class="pick-list">${nearCodes().map(pickerRow).join('')}</ul>` + pickerSection('All currencies', BY_NAME)
   }
   els.pickerList.innerHTML =
     html +
     `<p class="pick-foot">Rates come from the European Central Bank for 30 major currencies, and from <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">Rates By Exchange Rate API</a> for the rest.</p>`
+  renderPair()
 }
 
-function openPicker(what) {
-  picking = what
-  setText(els.pickerTitle, what.title)
+// The two places on the ruler. The next pick fills the first empty one, left before right.
+function renderPair() {
+  const next = !draft.a ? 'a' : !draft.b ? 'b' : null
+  for (const [side, slot] of [['a', els.slotA], ['b', els.slotB]]) {
+    const code = draft[side]
+    const where = side === 'a' ? 'left' : 'right'
+    slot.classList.toggle('empty', !code)
+    slot.classList.toggle('next', side === next)
+    slot.innerHTML = code ? `<span>${escapeHtml(CURRENCIES[code].short)}</span>` : PLUS
+    slot.setAttribute('aria-label', code ? `${CURRENCIES[code].name}, on the ${where}. Take it off` : `Empty, on the ${where}. Pick a currency below`)
+  }
+  els.pairSwap.disabled = !draft.a && !draft.b
+  els.pickerActions.hidden = draft.i == null || state.rulers.length < 2
+}
+
+function openRulerSheet(i = null) {
+  clearTimeout(finishing)
+  finishing = 0
+  const r = i == null ? null : state.rulers[i]
+  draft = { i, a: r?.a ?? null, b: r?.b ?? null }
+  setText(els.pickerTitle, r ? 'Ruler' : 'New ruler')
   els.pickerQ.value = ''
   renderPicker()
   els.picker.showModal()
   els.pickerList.scrollTop = 0
-  // On a phone, keep the keyboard closed so the recent and listed currencies stay in view.
+  // On a phone, keep the keyboard closed so the currencies close at hand stay in view.
   if (finePointer.matches) els.pickerQ.focus()
 }
 
@@ -1446,14 +1469,74 @@ function remember(code) {
   state.recent = [code, ...state.recent.filter((c) => c !== code)].slice(0, 6)
 }
 
-function choose(code) {
-  els.picker.close()
-  if (code === picking.here) return
-  if (picking.here) remember(picking.here)
-  remember(code)
-  picking.choose(code)
-  savePrefs()
+function pick(code) {
+  if (finishing) return
+  if (draft.a === code) draft.a = null
+  else if (draft.b === code) draft.b = null
+  else if (!draft.a || !draft.b) {
+    draft[draft.a ? 'b' : 'a'] = code
+    remember(code)
+    savePrefs()
+  } else {
+    // Two are on already; one has to come off first.
+    shakePair()
+    return
+  }
+  // A search has done its job once something's picked from it.
+  if (els.pickerQ.value.trim()) {
+    els.pickerQ.value = ''
+    els.pickerList.scrollTop = 0
+  }
+  renderPicker()
+  if (draft.a && draft.b) finish()
 }
+
+// Two on: the ruler is done. A beat to see it whole, then the sheet closes and it's put to use.
+function finish() {
+  const { i, a, b } = draft
+  finishing = setTimeout(
+    () => {
+      finishing = 0
+      els.picker.close()
+      if (i == null) addRuler(a, b)
+      else setRuler(i, a, b)
+    },
+    reduceMotion.matches ? 0 : 380,
+  )
+}
+
+function shakePair() {
+  if (reduceMotion.matches) return
+  els.pair.animate(
+    [{ transform: 'none' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(5px)' }, { transform: 'translateX(-3px)' }, { transform: 'none' }],
+    { duration: 280, easing: 'ease-out' },
+  )
+}
+
+// Turning the ruler around: the names trade places, and a finished ruler turns at once.
+els.pairSwap.addEventListener('click', () => {
+  if (finishing) return
+  const dx = els.slotB.getBoundingClientRect().left - els.slotA.getBoundingClientRect().left
+  ;[draft.a, draft.b] = [draft.b, draft.a]
+  els.pairSwap.classList.toggle('turned')
+  renderPair()
+  if (!reduceMotion.matches) {
+    const glide = { duration: 260, easing: 'cubic-bezier(.2,.8,.3,1)' }
+    els.slotA.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], glide)
+    els.slotB.animate([{ transform: `translateX(${-dx}px)` }, { transform: 'none' }], glide)
+  }
+  if (draft.i != null && draft.a && draft.b) setRuler(draft.i, draft.a, draft.b)
+})
+// Tapping a name on the ruler takes it off, the same as tapping its row.
+for (const side of ['a', 'b']) {
+  els[side === 'a' ? 'slotA' : 'slotB'].addEventListener('click', () => {
+    if (draft[side]) pick(draft[side])
+    if (finePointer.matches) els.pickerQ.focus()
+  })
+}
+els.pairRemove.addEventListener('click', () => {
+  if (draft.i != null) removeRuler(draft.i)
+})
 
 els.pickerQ.addEventListener('input', () => {
   renderPicker()
@@ -1462,8 +1545,8 @@ els.pickerQ.addEventListener('input', () => {
 els.pickerQ.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault()
-    const first = els.pickerList.querySelector('.pick-row:not([disabled])')
-    if (first && els.pickerQ.value.trim()) choose(first.dataset.code)
+    const first = els.pickerList.querySelector('.pick-row:not([disabled]):not([aria-pressed="true"])')
+    if (first && els.pickerQ.value.trim()) pick(first.dataset.code)
   } else if (e.key === 'ArrowDown') {
     e.preventDefault()
     els.pickerList.querySelector('.pick-row:not([disabled])')?.focus()
@@ -1471,7 +1554,7 @@ els.pickerQ.addEventListener('keydown', (e) => {
 })
 els.pickerList.addEventListener('click', (e) => {
   const row = e.target.closest('.pick-row')
-  if (row && !row.disabled) choose(row.dataset.code)
+  if (row && !row.disabled) pick(row.dataset.code)
 })
 
 // ---------- rulers in Settings
@@ -1508,18 +1591,6 @@ function renderRulers() {
     })
     .join('')
   renderDots()
-  if (els.editor.open) renderEditor()
-}
-
-// A new ruler: its left-hand currency, then its right, then it slides into hand.
-function startAdding() {
-  openPicker({
-    title: 'New ruler: left side',
-    here: null,
-    other: null,
-    choose: (a) =>
-      openPicker({ title: 'New ruler: right side', here: null, other: a, canSwap: false, choose: (b) => addRuler(a, b) }),
-  })
 }
 
 function addRuler(a, b) {
@@ -1555,67 +1626,16 @@ function removeRuler(i) {
   }
   state.rulers.splice(i, 1)
   if (state.current > i) state.current--
-  els.editor.close()
+  els.picker.close()
   syncCurrencyUi()
   savePrefs()
   renderRulers()
 }
 
-// One ruler's currencies. The ruler in hand changes on screen as they're chosen.
-function editRuler(i, side, code) {
-  const r = state.rulers[i]
-  const other = side === 'a' ? 'b' : 'a'
-  if (code === r[side]) return
-  if (i === state.current) {
-    if (code === r[other]) applySwap()
-    else setCurrency(side, code)
-  } else if (code === r[other]) {
-    ;[r.a, r.b] = [r.b, r.a]
-  } else if (canPair(side === 'a' ? code : r.a, side === 'b' ? code : r.b)) {
-    r[side] = code
-  }
-  savePrefs()
-  renderRulers()
-}
-
-let editing = 0 // which ruler the editor shows
-function openEditor(i) {
-  editing = i
-  renderEditor()
-  els.editor.showModal()
-}
-function renderEditor() {
-  const r = state.rulers[editing]
-  if (!r) return els.editor.close()
-  setText(els.editNameA, CURRENCIES[r.a].short)
-  setText(els.editNameB, CURRENCIES[r.b].short)
-  setText(els.editSideA, `Left · ${r.a}`)
-  setText(els.editSideB, `Right · ${r.b}`)
-  els.editA.setAttribute('aria-label', `Left-hand currency: ${CURRENCIES[r.a].name}. Change`)
-  els.editB.setAttribute('aria-label', `Right-hand currency: ${CURRENCIES[r.b].name}. Change`)
-  setText(els.editRate, rulerRate(r))
-  els.editRemove.disabled = state.rulers.length < 2
-}
-function pickFor(side) {
-  const i = editing
-  const r = state.rulers[i]
-  openPicker({
-    title: side === 'a' ? 'Left-hand currency' : 'Right-hand currency',
-    here: r[side],
-    other: r[side === 'a' ? 'b' : 'a'],
-    canSwap: true,
-    choose: (code) => editRuler(i, side, code),
-  })
-}
-
-els.editA.addEventListener('click', () => pickFor('a'))
-els.editB.addEventListener('click', () => pickFor('b'))
-els.editSwap.addEventListener('click', () => editRuler(editing, 'a', state.rulers[editing].b))
-els.editRemove.addEventListener('click', () => removeRuler(editing))
-els.addRuler.addEventListener('click', startAdding)
+els.addRuler.addEventListener('click', () => openRulerSheet())
 els.rulerList.addEventListener('click', (e) => {
   const open = e.target.closest('.mini')
-  if (open) openEditor(Number(open.closest('.ruler-row').dataset.i))
+  if (open) openRulerSheet(Number(open.closest('.ruler-row').dataset.i))
 })
 
 // Drag a ruler by its grip to reorder the set; the others make room as it passes.
@@ -1731,7 +1751,7 @@ els.settings.addEventListener('close', () => {
   if (rulerKey() !== rulerAtOpen) flashNames(2000)
 })
 // A tap on the dimmed backdrop closes a sheet.
-for (const sheet of [els.settings, els.rateSheet, els.picker, els.editor]) {
+for (const sheet of [els.settings, els.rateSheet, els.picker]) {
   sheet.addEventListener('click', (e) => {
     if (e.target === sheet) sheet.close()
   })
