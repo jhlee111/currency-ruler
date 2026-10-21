@@ -34,8 +34,9 @@ export default defineConfig({
         scope: '/',
         display: 'standalone',
         orientation: 'portrait',
-        background_color: '#ffffff',
-        theme_color: '#ffffff',
+        // The Wood theme's desk, the default, so the splash screen matches the first frame.
+        background_color: '#2a1d14',
+        theme_color: '#2a1d14',
         categories: ['travel', 'finance', 'utilities'],
         prefer_related_applications: false,
         icons: [

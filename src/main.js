@@ -122,8 +122,8 @@ const state = {
   R: 0, // animated toward liveR() when a new rate arrives
   cursor: validCursor(prefs?.cursor), // the reading on the line
   span: Number.isFinite(prefs?.span) ? clamp(prefs.span, MIN_SPAN, MAX_SPAN) : HOME_SPAN,
-  layout: prefs?.layout === 'middle' ? 'middle' : 'edges', // where the ticks start
-  theme: isTheme(prefs?.theme) ? prefs.theme : 'system',
+  layout: prefs?.layout === 'edges' ? 'edges' : 'middle', // where the ticks start; new rulers meet in the middle
+  theme: isTheme(prefs?.theme) ? prefs.theme : 'wood', // a maple ruler on a walnut desk until chosen otherwise
   editing: null, // 'a' | 'b' while an amount field has focus
   checking: false,
 }
