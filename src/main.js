@@ -2,6 +2,7 @@ import { CURRENCIES, SNAPSHOT } from './currencies.js'
 import { loadCachedRates, fetchRates, marketDue } from './rates.js'
 import { searchCurrencies, BY_NAME } from './search.js'
 import { THEMES, isTheme, resolveTheme } from './themes.js'
+import { setupInstall } from './install.js'
 import { buildTicks, tickLabel, tickStep, formatAmount, formatRate, parseAmount, niceStep } from './scale.js'
 
 // Coordinates: the ruler is a log10 axis of the left-hand currency (A), small at the top.
@@ -1139,47 +1140,11 @@ refreshRates()
 
 // ---------- installed app (PWA)
 
-const installItem = $('install-item')
-const installDesc = $('install-desc')
-const installBtn = $('install-btn')
 const updateToast = $('update-toast')
-
-const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
-const isIos = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-let installPrompt = null
-
-// Settings offers installing whichever way this browser allows; once installed, the item goes away.
-function renderInstall() {
-  installItem.hidden = standalone()
-  installBtn.hidden = !installPrompt
-  installDesc.textContent = installPrompt
-    ? 'Add it to your home screen. It opens full screen and works without a connection.'
-    : isIos
-      ? 'In Safari, tap Share, then “Add to Home Screen”. It opens full screen and works without a connection.'
-      : 'Use your browser’s menu to install it or add it to your home screen.'
-}
-
-addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault()
-  installPrompt = e
-  renderInstall()
-})
-addEventListener('appinstalled', () => {
-  installPrompt = null
-  renderInstall()
-})
-installBtn.addEventListener('click', async () => {
-  if (!installPrompt) return
-  const prompt = installPrompt
-  installPrompt = null
-  prompt.prompt()
-  await prompt.userChoice.catch(() => {})
-  renderInstall()
-})
+setupInstall()
 $('update-reload').addEventListener('click', () => location.reload())
 // __APP_VERSION__ and __APP_COMMIT__ are filled in by vite.config.js at build time.
 $('about').textContent = `Version ${__APP_VERSION__} · ${__APP_COMMIT__}`
-renderInstall()
 
 // Offline support and updates. Only production builds have a service worker (pnpm build, then
 // pnpm preview to try it locally); the dev server always serves the files as they are.

@@ -57,6 +57,16 @@
       <button type="button" class="tag tag-round" id="open-settings" aria-label="Settings" aria-haspopup="dialog" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     </div>
 
+    <div class="install-hint" id="install-hint" hidden>
+      <button type="button" class="tag" id="install-hint-open" aria-haspopup="dialog">
+        <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"/></svg>
+        <span id="install-hint-label">Install for offline use</span>
+      </button>
+      <button type="button" class="tag tag-round" id="install-hint-close" aria-label="Don’t suggest installing again">
+        <svg width="14" height="14" viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 4.5l9 9m0-9-9 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
     <p class="sr-only" id="live" aria-live="polite"></p>
     <div class="toast" id="update-toast" role="status" hidden>
       <span>A new version is ready.</span>
@@ -80,6 +90,18 @@
       </label>
       <div class="picker-list" id="picker-list"></div>
     </div>
+  </dialog>
+
+  <dialog class="sheet" id="install-sheet" aria-labelledby="install-title">
+    <form method="dialog">
+      <header class="sheet-head">
+        <h2 id="install-title">Install Currency Ruler</h2>
+        <button class="icon-btn" value="close" aria-label="Close">
+          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 4.5l9 9m0-9-9 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+      <div class="sheet-body install-body" id="install-body"></div>
+    </form>
   </dialog>
 
   <dialog class="sheet" id="rate-sheet" aria-labelledby="rate-title">
@@ -129,9 +151,9 @@
           <div class="setting">
             <span class="setting-text">
               <span class="setting-name">Install app</span>
-              <span class="setting-desc" id="install-desc"></span>
+              <span class="setting-desc">Opens full screen and works without a connection.</span>
             </span>
-            <button type="button" class="tool" id="install-btn" hidden>Install</button>
+            <button type="button" class="tool" id="install-btn">Show me how</button>
           </div>
         </li>
       </ul>

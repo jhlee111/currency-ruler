@@ -479,7 +479,46 @@ button, input, select { font: inherit; color: inherit; }
 
 #install-item[hidden] { display: none; }
 #install-item .setting { cursor: default; }
-#install-btn[hidden] { display: none; }
+
+/* The one-time suggestion, just above the bottom tools. */
+.install-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 56px);
+  z-index: 1;
+  display: flex;
+  gap: 6px;
+  max-width: calc(100% - 20px);
+  transform: translateX(-50%);
+  animation: hint-in 0.3s ease-out;
+}
+.install-hint[hidden] { display: none; }
+.install-hint .tag { max-width: none; }
+@keyframes hint-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+}
+
+.install-lead { margin: 0 0 14px; font-size: 15px; line-height: 1.5; }
+.install-body .tool.wide + .tool.wide { margin-top: 8px; }
+.tool.primary { border-color: var(--accent); background: var(--accent); color: var(--paper); font-weight: 700; }
+.tool.primary:hover { background: var(--accent); filter: brightness(1.05); }
+
+.install-steps { margin: 0 0 16px; padding: 0; list-style: none; counter-reset: step; }
+.install-steps li { display: flex; align-items: center; gap: 14px; padding: 10px 0; }
+.install-steps li + li { border-top: 1px solid var(--line); }
+.install-steps strong { display: block; font-size: 15px; }
+.install-steps small { display: block; margin-top: 2px; font-size: 13px; line-height: 1.4; color: var(--muted); }
+.install-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--accent-text);
+}
+.install-icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 .toast {
   position: fixed;
