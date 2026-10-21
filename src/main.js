@@ -5,7 +5,6 @@ import { THEMES, isTheme, resolveTheme } from './themes.js'
 import { setupInstall } from './install.js'
 import { setupShare } from './share.js'
 import { setupStats, track, trackOpen } from './stats.js'
-import { haptic } from './haptics.js'
 import { rulerFor, timeZoneRegion, networkRegion } from './place.js'
 import { buildTicks, tickLabel, tickStep, formatAmount, formatRate, parseAmount, niceStep } from './scale.js'
 
@@ -664,12 +663,12 @@ function scrollBy(dy, pointerType) {
 // A short buzz each time a labelled tick crosses the line, like the detents of a dial.
 let lastClick = 0
 function clickPast(from, to, pointerType) {
-  if (pointerType !== 'touch') return
+  if (pointerType !== 'touch' || !navigator.vibrate) return
   const [lo, hi] = from < to ? [from, to] : [to, from]
   const now = performance.now()
   if (now - lastClick > 35 && frame.labelsA.some((t) => t.log > lo && t.log <= hi)) {
     lastClick = now
-    haptic(3)
+    navigator.vibrate(3)
   }
 }
 
@@ -1217,7 +1216,7 @@ function layDeck() {
   markDot(Math.abs(deck.x) > pitch / 2 && typeof near === 'number' ? near : state.current)
 }
 
-const buzz = (pointerType, ms) => pointerType === 'touch' && haptic(ms)
+const buzz = (pointerType, ms) => pointerType === 'touch' && navigator.vibrate?.(ms)
 const rubberBand = (x, d) => Math.sign(x) * d * (1 - 1 / ((Math.abs(x) * 0.55) / d + 1))
 
 function pickUp() {
