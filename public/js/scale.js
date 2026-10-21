@@ -146,6 +146,7 @@ export function tickLabel(m, n, cur) {
 
 /** A reading. `step` is the precision it was snapped to, if any. */
 export function formatAmount(v, cur, step) {
+  if (v === 0) return `${cur.symbol}0`
   if (!(v > 0) || !Number.isFinite(v)) return ''
   if (v >= 1e9) return cur.symbol + compact.format(v) // ¥1.2B, $3.4T
   let d
@@ -173,7 +174,7 @@ export function niceStep(x) {
 
 const MULTIPLIERS = { k: 1e3, m: 1e6, b: 1e9, t: 1e12, 천: 1e3, 만: 1e4, 억: 1e8, 조: 1e12 }
 
-/** Accepts "3,450", "¥3450", "3.2k", "5만". Returns NaN when it can't read a positive amount. */
+/** Accepts "0", "3,450", "¥3450", "3.2k", "5만". Returns NaN when it can't read an amount. */
 export function parseAmount(text, symbol = '') {
   let s = String(text)
   if (symbol) s = s.split(symbol).join('')
@@ -184,5 +185,5 @@ export function parseAmount(text, symbol = '') {
   const match = s.match(/^(\d+(?:\.\d*)?|\.\d+)([kmbt천만억조])?$/)
   if (!match) return NaN
   const v = parseFloat(match[1]) * (match[2] ? MULTIPLIERS[match[2]] : 1)
-  return v > 0 ? v : NaN
+  return v >= 0 ? v : NaN
 }

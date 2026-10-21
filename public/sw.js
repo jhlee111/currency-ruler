@@ -1,7 +1,7 @@
 // Keeps the app usable with no signal: the app's own files are served from a cache that is
 // filled in one go when this worker installs. VERSION is stamped by scripts/stamp-sw.mjs on
 // deploy, so every deploy installs a fresh, complete set and drops the old one.
-const VERSION = '98261090c83f'
+const VERSION = '950faa202e90'
 const APP = `app-${VERSION}`
 const FONTS = 'fonts-v1'
 const FILES = [

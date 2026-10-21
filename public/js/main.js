@@ -48,6 +48,7 @@ const ctx = els.canvas.getContext('2d')
 const MIN_SPAN = 0.04 // decades on screen, fully zoomed in
 const MAX_SPAN = 7
 const HOME_SPAN = 3.2 // how much shows when the app opens, and after a double tap
+const ZERO_GAP = 0.4 // decades of ruler between 0 and the smallest coin, spaced linearly
 const ENDLESS = 15 // the bottom of the scale: 10^15 is as good as endless, and still exact in a double
 const MAGNET = 10 // px within which a settling reading catches on a labelled tick, at most…
 const MAGNET_SHARE = Math.log10(1.025) // …and never more than ±2.5% of the amount
@@ -111,7 +112,8 @@ function loadPrefs() {
 }
 
 function validCursor(c) {
-  if (c && (c.side === 'a' || c.side === 'b') && Number.isFinite(c.log)) return { side: c.side, log: c.log, step: c.step > 0 ? c.step : null }
+  const pos = c?.pos ?? c?.log // saved before 0 joined the ruler, when a position was just a log
+  if (c && (c.side === 'a' || c.side === 'b') && Number.isFinite(pos)) return { side: c.side, pos, step: c.step > 0 ? c.step : null }
   return null
 }
 
@@ -149,27 +151,54 @@ function liveR() {
   return Math.log10(rates[state.a] / rates[state.b])
 }
 
-const readingLogA = (c) => (c.side === 'a' ? c.log : c.log + state.R)
-const cursorLogA = () => readingLogA(state.cursor)
+const readingPosA = (c) => (c.side === 'a' ? c.pos : c.pos + state.R)
+const cursorPosA = () => readingPosA(state.cursor)
 const kNow = () => size.h / state.span
-const viewLo = () => cursorLogA() - state.span / 2
+const viewLo = () => cursorPosA() - state.span / 2
 
 // Where the ruler opens and where a double tap returns: a typical price in the pair's smaller
 // unit (¥1,000, ₩10,000). Basing it on the pair rather than the left side survives a swap.
 function home() {
   const code = unitsPerUsd(state.a) >= unitsPerUsd(state.b) ? state.a : state.b
-  return { side: code === state.a ? 'a' : 'b', log: Math.round(Math.log10(unitsPerUsd(code))) + 1, step: null }
+  return { side: code === state.a ? 'a' : 'b', pos: Math.round(Math.log10(unitsPerUsd(code))) + 1, step: null }
 }
 
-// The smallest amount a currency has, as a log: ¥1 → 0, $0.01 → -2.
-const smallestLog = (code) => -CURRENCIES[code].minor
+// ---------- positions on the ruler
+//
+// A position is in decades. From the smaller of the two smallest coins up (¥1 against $0.01
+// → ¥1) it is simply log10 of the amount, so the right-hand scale is the left-hand one shifted
+// by R. A log scale never reaches 0, so below that coin a short linear stretch carries the
+// smaller amounts down to 0. The coin is the same value on both sides, so the shift by R
+// holds on that stretch too.
 
-// The ruler starts at the smaller of the two smallest coins (¥1 against $0.01 → ¥1), in A's log space.
-const rulerStart = () => Math.min(smallestLog(state.a), smallestLog(state.b) + state.R)
+const smallestLog = (code) => -CURRENCIES[code].minor // ¥1 → 0, $0.01 → -2
+const coinPos = () => Math.min(smallestLog(state.a), smallestLog(state.b) + state.R) // in A's space
+const zeroPos = () => coinPos() - ZERO_GAP // in A's space; the top end of the ruler
+const shift = (side) => (side === 'a' ? 0 : state.R)
 
-// The start of the ruler can be pulled down to the line; below, the scale runs on and on.
+function valueAt(pos, side) {
+  const coin = coinPos() - shift(side)
+  if (pos >= coin) return 10 ** pos
+  const share = (pos - coin + ZERO_GAP) / ZERO_GAP
+  // Shifting by R and back leaves a rounding hair above 0; 0 should read as 0 on both sides.
+  return share < 1e-9 ? 0 : 10 ** coin * share
+}
+
+function posOf(value, side) {
+  const coin = coinPos() - shift(side)
+  if (value >= 10 ** coin) return Math.log10(value)
+  return coin - ZERO_GAP + (ZERO_GAP * value) / 10 ** coin
+}
+
+// What one pixel is worth at a position, for rounding a reading to what the eye can resolve.
+function perPixel(pos, side) {
+  const coin = coinPos() - shift(side)
+  return (pos >= coin ? 10 ** pos * Math.LN10 : 10 ** coin / ZERO_GAP) / kNow()
+}
+
+// 0 can be pulled down to the line; below, the scale runs on and on.
 function scrollLimit(from, to) {
-  return clamp(to, Math.min(rulerStart(), from), Math.max(ENDLESS, from))
+  return clamp(to, Math.min(zeroPos(), from), Math.max(ENDLESS, from))
 }
 
 // ---------- animation
@@ -274,21 +303,53 @@ function draw() {
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.clearRect(0, 0, els.canvas.width, els.canvas.height)
 
-  const ticksA = buildTicks(lo, hi, k, gap)
-  const ticksB = buildTicks(lo - state.R, hi - state.R, k, gap)
+  const ticksA = scaleTicks('a', lo, hi, k, gap)
+  const ticksB = scaleTicks('b', lo - state.R, hi - state.R, k, gap)
+  drawRulerStart(lo, k) // first, so nothing drawn near the end is painted over
   if (state.layout === 'middle') drawSpine()
   drawSide(ticksA, 0, false, CURRENCIES[state.a], k, lo)
   drawSide(ticksB, state.R, true, CURRENCIES[state.b], k, lo)
-  drawRulerStart(lo, k)
   frame = { labelsA: ticksA.filter((t) => t.label), labelsB: ticksB.filter((t) => t.label) }
 }
+
+// One side's ticks: a 0 at the top end, evenly spaced amounts on the linear stretch up to the
+// coin, then the log scale from the coin on. `log` is always the tick's position.
+function scaleTicks(side, lo, hi, k, gap) {
+  const coin = coinPos() - shift(side)
+  const ticks = [{ zero: true, m: 1000, log: coin - ZERO_GAP, alpha: 1, coarse: true, label: true, step: 1 }]
+  if (lo < coin) ticks.push(...linearTicks(side, k, gap))
+  if (hi > coin) ticks.push(...buildTicks(Math.max(lo, coin), hi, k, gap).filter((t) => t.log >= coin - 1e-9))
+  return ticks
+}
+
+// The smallest of 1, 2, 5 × 10ⁿ that is at least x, so spacing never comes out tighter than asked.
+function niceAtLeast(x) {
+  const p = 10 ** Math.floor(Math.log10(x))
+  const f = x / p
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p
+}
+
+// Between 0 and the coin, amounts are evenly spaced: ticks at least 6px apart, labels a label apart.
+function linearTicks(side, k, gap) {
+  const coin = 10 ** (coinPos() - shift(side)) // in this side's units
+  const pxPerUnit = (ZERO_GAP * k) / coin
+  const minor = niceAtLeast(6 / pxPerUnit)
+  const major = niceAtLeast(gap / pxPerUnit)
+  const ticks = []
+  for (let i = 1; i * minor < coin * (1 - 1e-9); i++) {
+    const value = i * minor
+    const label = Math.abs(value / major - Math.round(value / major)) < 1e-6
+    ticks.push({ linear: true, value, log: posOf(value, side), alpha: 1, coarse: label, label, step: major })
+  }
+  return ticks
+}
+
+const tickText = (t, cur) => (t.zero ? `${cur.symbol}0` : t.linear ? formatAmount(t.value, cur, t.step) : tickLabel(t.m, t.n, cur))
 
 // Edges: ticks hang in from the sides with the amounts inside them.
 // Middle: ticks grow out from the centre line with the amounts outside them.
 function drawSide(ticks, offset, right, cur, k, lo) {
   const { w, h, dpr } = size
-  // Nothing smaller than the currency's smallest coin exists, so that end of the scale stays blank.
-  ticks = ticks.filter((t) => t.log >= -cur.minor - 1e-9)
   const middle = state.layout === 'middle'
   const origin = middle ? w / 2 : right ? w : 0
   const dir = (right ? -1 : 1) * (middle ? -1 : 1)
@@ -312,20 +373,22 @@ function drawSide(ticks, offset, right, cur, k, lo) {
   const x = (origin + dir * M.labelX) * dpr
   for (const t of ticks) {
     if (!t.label) continue
-    const y = (t.log + offset - lo) * k
+    const big = t.m === 1000
+    const fs = big ? M.fsBig : M.fs
+    // 0 sits on the very end of the ruler, so its label goes just inside rather than across the edge.
+    const y = (t.log + offset - lo) * k + (t.zero ? fs * 0.8 : 0.5)
     if (y < -30 || y > h + 30) continue
     if (Math.abs(y - h / 2) < 27) continue // under the reading line's band; its pills show the amount
-    const big = t.m === 1000
-    ctx.font = `${big ? 700 : 400} ${(big ? M.fsBig : M.fs) * dpr}px ${FONT}`
+    ctx.font = `${big ? 700 : 400} ${fs * dpr}px ${FONT}`
     ctx.fillStyle = big ? colors.ink : colors.inkSoft
-    ctx.fillText(tickLabel(t.m, t.n, cur), x, (y + 0.5) * dpr)
+    ctx.fillText(tickText(t, cur), x, y * dpr)
   }
 }
 
-// Above its start the ruler simply ends: the page shows through, edged like the end of a stick.
+// Above 0 the ruler simply ends: the page shows through, edged like the end of a stick.
 function drawRulerStart(lo, k) {
   const { w, dpr } = size
-  const y = (rulerStart() - lo) * k
+  const y = (zeroPos() - lo) * k
   if (y <= 0) return
   const yd = Math.round(y * dpr)
   ctx.fillStyle = colors.paper
@@ -357,11 +420,10 @@ function readings() {
   const A = CURRENCIES[state.a]
   const B = CURRENCIES[state.b]
   const c = state.cursor
-  const la = cursorLogA()
+  const pa = cursorPosA()
   return {
-    la,
-    a: formatAmount(10 ** la, A, c.side === 'a' ? c.step : null),
-    b: formatAmount(10 ** (la - state.R), B, c.side === 'b' ? c.step : null),
+    a: formatAmount(valueAt(pa, 'a'), A, c.side === 'a' ? c.step : null),
+    b: formatAmount(valueAt(pa - state.R, 'b'), B, c.side === 'b' ? c.step : null),
   }
 }
 
@@ -474,10 +536,10 @@ function stopMotion() {
 // Readings follow the left-hand currency at about a pixel's precision. Returns false at a limit.
 function scrollBy(dy, pointerType) {
   const k = kNow()
-  const from = cursorLogA()
+  const from = cursorPosA()
   const wanted = from - dy / k
   const to = scrollLimit(from, wanted)
-  state.cursor = { side: 'a', log: to, step: niceStep((10 ** to * Math.LN10) / k) }
+  state.cursor = { side: 'a', pos: to, step: niceStep(perPixel(to, 'a')) }
   clickPast(from, to, pointerType)
   requestRender()
   return to === wanted
@@ -495,34 +557,34 @@ function clickPast(from, to, pointerType) {
   }
 }
 
-// Where a reading at logA comes to rest: on a labelled tick if one is close, otherwise on a
+// Where a reading at posA comes to rest: on a labelled tick if one is close, otherwise on a
 // tidy amount for the current zoom (¥1,200 rather than ¥1,197).
-function restingPlace(logA) {
+function restingPlace(posA) {
   const k = kNow()
   let best = null
   let bestDist = Math.min(MAGNET, k * MAGNET_SHARE)
   for (const t of frame.labelsA) {
-    const d = Math.abs(t.log - logA) * k
+    const d = Math.abs(t.log - posA) * k
     if (d < bestDist) {
       bestDist = d
       best = t
     }
   }
-  if (best) return { side: 'a', log: best.log, step: tickStep(best.m, best.n) }
-  const v = 10 ** logA
-  const step = niceStep(((v * Math.LN10) / k) * 4)
-  return { side: 'a', log: Math.log10(Math.max(step, Math.round(v / step) * step)), step }
+  if (best) return { side: 'a', pos: best.log, step: best.step ?? tickStep(best.m, best.n) }
+  const step = niceStep(perPixel(posA, 'a') * 4)
+  const value = Math.max(0, Math.round(valueAt(posA, 'a') / step) * step)
+  return { side: 'a', pos: posOf(value, 'a'), step }
 }
 
 // Glide the scale so `to` sits on the line, then hold it there exactly.
 function glideTo(to, duration = 200) {
   stopMotion()
-  const from = cursorLogA()
-  const target = readingLogA(to)
+  const from = cursorPosA()
+  const target = readingPosA(to)
   if (Math.abs(target - from) * kNow() < 0.5) duration = 0
   motion = tween(duration, easeOutCubic, (e) => {
-    const log = lerp(from, target, e)
-    state.cursor = { side: 'a', log, step: niceStep((10 ** log * Math.LN10) / kNow()) }
+    const pos = lerp(from, target, e)
+    state.cursor = { side: 'a', pos, step: niceStep(perPixel(pos, 'a')) }
   }, () => {
     state.cursor = to
     motion = null
@@ -531,7 +593,7 @@ function glideTo(to, duration = 200) {
 }
 
 function settle() {
-  glideTo(restingPlace(cursorLogA()), 160)
+  glideTo(restingPlace(cursorPosA()), 160)
 }
 
 function fling(velocity, pointerType) {
@@ -567,13 +629,13 @@ function zoomTo(span, duration = 0) {
 function resetView() {
   stopMotion()
   const fromSpan = state.span
-  const fromLog = cursorLogA()
+  const fromPos = cursorPosA()
   const to = home()
-  const target = readingLogA(to)
+  const target = readingPosA(to)
   motion = tween(320, easeOutCubic, (e) => {
     state.span = lerp(fromSpan, HOME_SPAN, e)
-    const log = lerp(fromLog, target, e)
-    state.cursor = { side: 'a', log, step: niceStep((10 ** log * Math.LN10) / kNow()) }
+    const pos = lerp(fromPos, target, e)
+    state.cursor = { side: 'a', pos, step: niceStep(perPixel(pos, 'a')) }
   }, () => {
     state.cursor = to
     motion = null
@@ -581,14 +643,18 @@ function resetView() {
   })
 }
 
-// Step the reading to the next tidy amount on its own side.
+// Step the reading on `side` to the next tidy amount, no lower than 0.
+function stepReading(side, dir, big) {
+  const pos = side === 'a' ? cursorPosA() : cursorPosA() - state.R
+  const v = valueAt(pos, side)
+  const step = niceStep(perPixel(pos, side) * (big ? 30 : 4))
+  const next = Math.max(0, (Math.round(v / step) + dir) * step)
+  glideTo({ side, pos: posOf(next, side), step }, 120)
+  return { next, step }
+}
+
 function nudge(dir, big) {
-  const { side, log } = state.cursor
-  const v = 10 ** log
-  const step = niceStep(((v * Math.LN10) / kNow()) * (big ? 30 : 4))
-  const next = (Math.round(v / step) + dir) * step
-  if (next <= 0) return
-  glideTo({ side, log: Math.log10(next), step }, 120)
+  stepReading(state.cursor.side, dir, big)
 }
 
 // ---------- touch, mouse, wheel, keyboard
@@ -800,19 +866,14 @@ for (const [side, input] of [['a', els.amtA], ['b', els.amtB]]) {
     const v = parseAmount(input.value, CURRENCIES[state[side]].symbol)
     if (!Number.isFinite(v)) return input.setAttribute('aria-invalid', 'true')
     input.removeAttribute('aria-invalid')
-    glideTo({ side, log: Math.log10(v), step: null })
+    glideTo({ side, pos: posOf(v, side), step: null })
     fitPill(input)
   })
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === 'Escape') input.blur()
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault()
-      const log = side === 'a' ? cursorLogA() : cursorLogA() - state.R
-      const v = 10 ** log
-      const step = niceStep(((v * Math.LN10) / kNow()) * (e.shiftKey ? 30 : 4))
-      const next = (Math.round(v / step) + (e.key === 'ArrowUp' ? 1 : -1)) * step
-      if (next <= 0) return
-      glideTo({ side, log: Math.log10(next), step }, 120)
+      const { next, step } = stepReading(side, e.key === 'ArrowUp' ? 1 : -1, e.shiftKey)
       input.value = formatAmount(next, CURRENCIES[state[side]], step)
     }
   })
@@ -831,13 +892,13 @@ function setCurrency(which, code) {
   }
   if (!canPair(which === 'a' ? code : state.a, which === 'b' ? code : state.b)) return
   // Keep the amount on the unchanged side; the changed side re-reads against it.
-  const la = cursorLogA()
-  const keep = other === 'a' ? la : la - state.R
+  const pa = cursorPosA()
+  const keep = valueAt(other === 'a' ? pa : pa - state.R, other)
   const step = state.cursor.side === other ? state.cursor.step : null
   stopMotion()
   state[which] = code
   settleR()
-  state.cursor = { side: other, log: keep, step }
+  state.cursor = { side: other, pos: posOf(keep, other), step }
   syncCurrencyUi()
   savePrefs()
   requestRender()
