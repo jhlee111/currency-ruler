@@ -3,6 +3,8 @@
 // browser this is. In-app browsers (KakaoTalk, LINE, Instagram…) can't install at all, so
 // there the first step is getting the page into a real browser.
 
+import { track } from './stats.js'
+
 const KEY = 'currency-ruler:install' // { visits, dismissed, installed }
 const ua = navigator.userAgent
 const isIos = /iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
@@ -29,6 +31,12 @@ const inApp = /KAKAOTALK/i.test(ua)
               : null
 
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
+
+// What kind of device and window this is, for the anonymous usage counts (src/stats.js).
+export const device = {
+  platform: isIos ? 'ios' : isAndroid ? 'android' : /Macintosh/.test(ua) ? 'mac' : /Windows/.test(ua) ? 'windows' : 'other',
+  display: () => (standalone() ? 'installed' : inApp ? `in-app:${inApp}` : 'browser'),
+}
 
 const $ = (id) => document.getElementById(id)
 const load = () => {
@@ -104,6 +112,7 @@ export function setupInstall() {
   }
 
   function openGuide() {
+    track('install', 'guide')
     if (settings.open) settings.close()
     hideHint(true)
     body.innerHTML = guide()
@@ -137,7 +146,8 @@ export function setupInstall() {
     const p = prompt
     prompt = null
     p.prompt()
-    await p.userChoice.catch(() => {})
+    const choice = await p.userChoice.catch(() => null)
+    track('install', `prompt:${choice?.outcome ?? 'unknown'}`)
     if (sheet.open) sheet.close()
     render()
   }
@@ -177,6 +187,7 @@ export function setupInstall() {
     offerHint()
   })
   addEventListener('appinstalled', () => {
+    track('install', 'installed')
     prompt = null
     state.installed = true
     save(state)

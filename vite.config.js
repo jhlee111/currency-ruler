@@ -5,6 +5,10 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
 
+// Cloudflare Web Analytics: visits, countries, referrers, devices; no cookies. The token is the
+// site's public one from the dashboard (Analytics & Logs → Web Analytics); every page carries it.
+const WEB_ANALYTICS_TOKEN = '981d64a170bb462fa57f67cc96db0ca2'
+
 // The commit a build came from, shown next to the version in Settings.
 function commit() {
   try {
@@ -20,6 +24,21 @@ export default defineConfig({
     __APP_COMMIT__: JSON.stringify(commit()),
   },
   plugins: [
+    // Only the built app reports visits; the dev server never does.
+    {
+      name: 'web-analytics',
+      apply: 'build',
+      transformIndexHtml: () =>
+        WEB_ANALYTICS_TOKEN
+          ? [
+              {
+                tag: 'script',
+                attrs: { type: 'module', src: 'https://static.cloudflareinsights.com/beacon.min.js', 'data-cf-beacon': JSON.stringify({ token: WEB_ANALYTICS_TOKEN }) },
+                injectTo: 'body',
+              },
+            ]
+          : [],
+    },
     VitePWA({
       // src/main.js registers the worker itself, so it can offer the update rather than reload under the user.
       injectRegister: false,

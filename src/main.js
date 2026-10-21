@@ -4,6 +4,7 @@ import { searchCurrencies, BY_NAME } from './search.js'
 import { THEMES, isTheme, resolveTheme } from './themes.js'
 import { setupInstall } from './install.js'
 import { setupShare } from './share.js'
+import { setupStats, track, trackOpen } from './stats.js'
 import { buildTicks, tickLabel, tickStep, formatAmount, formatRate, parseAmount, niceStep } from './scale.js'
 
 // Coordinates: the ruler is a log10 axis of the left-hand currency (A), small at the top.
@@ -927,7 +928,10 @@ function wheelSideways(dx) {
   if (Math.abs(sideways.sum) < 60) return
   sideways.done = true
   const n = neighbour(sideways.sum > 0 ? 1 : -1)
-  if (typeof n === 'number') switchTo(n)
+  if (typeof n === 'number') {
+    switchTo(n)
+    track('swipe', 'trackpad')
+  }
 }
 
 // Safari reports trackpad pinches as gesture events rather than ctrl-wheel.
@@ -957,7 +961,10 @@ els.ruler.addEventListener('keydown', (e) => {
     case 'ArrowLeft':
     case 'ArrowRight': {
       const n = neighbour(e.key === 'ArrowRight' ? 1 : -1)
-      if (typeof n === 'number') switchTo(n)
+      if (typeof n === 'number') {
+        switchTo(n)
+        track('swipe', 'key')
+      }
       break
     }
     case '+':
@@ -994,6 +1001,8 @@ for (const [side, input] of [['a', els.amtA], ['b', els.amtB]]) {
     selectAll(input)
   })
   input.addEventListener('blur', () => {
+    if (input.dataset.typed) track('type', side)
+    delete input.dataset.typed
     state.editing = null
     input.classList.remove('editing')
     input.removeAttribute('aria-invalid')
@@ -1005,6 +1014,7 @@ for (const [side, input] of [['a', els.amtA], ['b', els.amtB]]) {
     const v = parseAmount(input.value, CURRENCIES[state[side]].symbol)
     if (!Number.isFinite(v)) return input.setAttribute('aria-invalid', 'true')
     input.removeAttribute('aria-invalid')
+    input.dataset.typed = '1'
     glideTo({ side, pos: posOf(v, side), step: null })
     fitPill(input)
   })
@@ -1203,6 +1213,7 @@ function releaseDeck(v, g) {
     deck.x += dir * pitch
     paintGhost(ghosts[dir], neighbour(dir))
     buzz(g.pointerType, 10)
+    track('swipe', g.pointerType)
   } else if (ghosts[toward].holds === 'add' && Math.abs(deck.x) > ADD_PULL) {
     openRulerSheet()
   }
@@ -1332,6 +1343,7 @@ let flipping = false
 async function swapSides() {
   if (flipping || deck.raf) return // one motion at a time: a ruler is still sliding into place
   els.swap.classList.toggle('turned')
+  track('flip', 'ruler')
   if (reduceMotion.matches || !els.ruler.animate) {
     applySwap()
     return
@@ -1499,7 +1511,10 @@ function finish() {
       finishing = 0
       els.picker.close()
       if (i == null) addRuler(a, b)
-      else setRuler(i, a, b)
+      else if (state.rulers[i].a !== a || state.rulers[i].b !== b) {
+        setRuler(i, a, b)
+        track('edit', `${a}/${b}`)
+      }
     },
     reduceMotion.matches ? 0 : 380,
   )
@@ -1525,7 +1540,10 @@ els.pairSwap.addEventListener('click', () => {
     els.slotA.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], glide)
     els.slotB.animate([{ transform: `translateX(${-dx}px)` }, { transform: 'none' }], glide)
   }
-  if (draft.i != null && draft.a && draft.b) setRuler(draft.i, draft.a, draft.b)
+  if (draft.i != null && draft.a && draft.b) {
+    setRuler(draft.i, draft.a, draft.b)
+    track('flip', 'sheet')
+  }
 })
 // Tapping a name on the ruler takes it off, the same as tapping its row.
 for (const side of ['a', 'b']) {
@@ -1595,7 +1613,10 @@ function renderRulers() {
 
 function addRuler(a, b) {
   let i = state.rulers.findIndex((r) => r.a === a && r.b === b)
-  if (i < 0) i = state.rulers.push({ a, b }) - 1
+  if (i < 0) {
+    i = state.rulers.push({ a, b }) - 1
+    track('add', `${a}/${b}`)
+  }
   renderRulers()
   syncCurrencyUi()
   savePrefs()
@@ -1618,6 +1639,7 @@ function moveRuler(from, to) {
 
 function removeRuler(i) {
   if (state.rulers.length < 2) return
+  track('remove', `${state.rulers[i].a}/${state.rulers[i].b}`)
   if (i === state.current) {
     // The nearest other ruler with rates takes its place in hand.
     const next = [i + 1, i - 1, ...state.rulers.keys()].find((j) => j !== i && state.rulers[j] && priceable(state.rulers[j]))
@@ -1697,6 +1719,7 @@ function load(kind) {
       // Any failed check means the rate on screen can't be vouched for, even if an earlier one worked.
       state.status[kind] = 'saved'
       state.checks[kind] = { at: Date.now(), ok: false }
+      track('rates', `${kind}:fail`)
     })
 }
 
@@ -1726,7 +1749,9 @@ els.rateCheck.addEventListener('click', refreshRates)
 
 // A phone app sits in the background for days; check again when it comes back or reconnects.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && Date.now() - lastFetch > REFRESH_AFTER) refreshRates()
+  if (document.visibilityState !== 'visible' || Date.now() - lastFetch <= REFRESH_AFTER) return
+  trackOpen()
+  refreshRates()
 })
 window.addEventListener('online', refreshRates)
 
@@ -1773,6 +1798,7 @@ els.themeOptions.innerHTML = THEMES.map(
 ).join('')
 els.themeOptions.addEventListener('change', (e) => {
   state.theme = e.target.value
+  track('theme', state.theme)
   applyTheme()
   savePrefs()
   if (!reduceMotion.matches) els.canvas.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' })
@@ -1780,6 +1806,7 @@ els.themeOptions.addEventListener('change', (e) => {
 
 els.layoutOptions.addEventListener('change', (e) => {
   state.layout = e.target.value
+  track('layout', state.layout)
   applyLayout()
   savePrefs()
   requestRender()
@@ -1797,6 +1824,9 @@ darkScheme.addEventListener('change', () => {
   if (state.theme === 'system') applyTheme()
 })
 document.fonts?.ready.then(requestRender)
+// Every event carries the ruler in hand and how the app is set up.
+setupStats(() => ({ pair: `${state.a}/${state.b}`, rulers: state.rulers.length, theme: state.theme, layout: state.layout }))
+trackOpen()
 refreshRates()
 
 // ---------- installed app (PWA)

@@ -5,6 +5,8 @@
 const APP_URL = 'https://fx-ruler.subtl.ink/'
 const SHARE = { title: 'Currency Ruler', text: 'Read prices in two currencies at a glance, even offline.', url: APP_URL }
 
+import { track } from './stats.js'
+
 const $ = (id) => document.getElementById(id)
 
 export function setupShare() {
@@ -18,6 +20,7 @@ export function setupShare() {
   send.hidden = !navigator.share
 
   async function open() {
+    track('share', 'qr')
     if (settings.open) settings.close()
     copy.textContent = 'Copy link'
     if (!qr.firstChild) {
@@ -32,12 +35,14 @@ export function setupShare() {
   send.addEventListener('click', async () => {
     try {
       await navigator.share(SHARE)
+      track('share', 'sent')
       sheet.close()
     } catch {} // dismissed: stay on the sheet
   })
   copy.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(APP_URL)
+      track('share', 'copy')
       copy.textContent = 'Link copied'
     } catch {
       copy.textContent = APP_URL

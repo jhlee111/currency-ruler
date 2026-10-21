@@ -1,10 +1,15 @@
-// Cloudflare Workers static assets: serves the Vite build in ./dist (pnpm build).
+// Cloudflare Workers: serves the Vite build in ./dist (pnpm build), and takes the app's anonymous
+// usage events (worker/index.js). Files are served first; only other paths reach the Worker.
 {
   "name": "currency-ruler",
+  "main": "worker/index.js",
   "compatibility_date": "2026-10-01",
   "assets": {
-    "directory": "./dist"
+    "directory": "./dist",
+    "binding": "ASSETS"
   },
+  // Where the usage events go. scripts/stats.mjs (pnpm stats) reads them back.
+  "analytics_engine_datasets": [{ "binding": "EVENTS", "dataset": "currency_ruler_events" }],
   // The app's address. Cloudflare creates the DNS record and certificate on deploy.
   "routes": [{ "pattern": "fx-ruler.subtl.ink", "custom_domain": true }],
   // Keep the old address too: phones that installed the app from it still get updates.

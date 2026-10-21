@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview --port 5318 --strictPort",
     "release": "node scripts/release.mjs",
+    "stats": "node scripts/stats.mjs",
     "regions": "node scripts/build-regions.mjs",
     "icons": "python3 scripts/make-icons.py"
   },

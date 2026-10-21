@@ -16,6 +16,18 @@
         "preview"
       ],
       "port": 5318
+    },
+    {
+      "name": "currency-ruler-worker",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "exec",
+        "wrangler",
+        "dev",
+        "--port",
+        "8787"
+      ],
+      "port": 8787
     }
   ]
 }
