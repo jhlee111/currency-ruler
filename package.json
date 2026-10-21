@@ -1,0 +1,13 @@
+{
+  "name": "currency-ruler",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "node scripts/stamp-sw.mjs && wrangler deploy"
+  },
+  "devDependencies": {
+    "cldr-core": "^48.2.0",
+    "wrangler": "^4"
+  }
+}

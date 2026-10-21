@@ -1,0 +1,8 @@
+// Cloudflare Workers static assets: everything in ./public is served as-is, no build step.
+{
+  "name": "currency-ruler",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public"
+  }
+}
