@@ -3,6 +3,7 @@ import { loadCachedRates, fetchRates, marketDue } from './rates.js'
 import { searchCurrencies, BY_NAME } from './search.js'
 import { THEMES, isTheme, resolveTheme } from './themes.js'
 import { setupInstall } from './install.js'
+import { setupShare } from './share.js'
 import { buildTicks, tickLabel, tickStep, formatAmount, formatRate, parseAmount, niceStep } from './scale.js'
 
 // Coordinates: the ruler is a log10 axis of the left-hand currency (A), small at the top.
@@ -14,12 +15,11 @@ import { buildTicks, tickLabel, tickStep, formatAmount, formatRate, parseAmount,
 
 const $ = (id) => document.getElementById(id)
 const els = {
+  app: document.querySelector('.app'),
   status: $('status'),
   statusText: $('status-text'),
   nameA: $('name-a'),
   nameB: $('name-b'),
-  pickA: $('pick-a'),
-  pickB: $('pick-b'),
   picker: $('picker'),
   pickerTitle: $('picker-title'),
   pickerQ: $('picker-q'),
@@ -43,8 +43,21 @@ const els = {
   rateSource: $('rate-source'),
   rateChecked: $('rate-checked'),
   rateCheck: $('rate-check'),
+  dots: $('dots'),
+  rulerList: $('ruler-list'),
+  addRuler: $('add-ruler'),
+  editor: $('ruler-editor'),
+  editA: $('edit-a'),
+  editB: $('edit-b'),
+  editNameA: $('edit-name-a'),
+  editNameB: $('edit-name-b'),
+  editSideA: $('edit-side-a'),
+  editSideB: $('edit-side-b'),
+  editSwap: $('edit-swap'),
+  editRate: $('edit-rate'),
+  editRemove: $('edit-remove'),
 }
-const ctx = els.canvas.getContext('2d')
+let ctx = els.canvas.getContext('2d') // swapped for a ghost card's while one is painted
 
 const MIN_SPAN = 0.04 // decades on screen, fully zoomed in
 const MAX_SPAN = 7
@@ -58,6 +71,15 @@ const FLICK = 0.25 // px/ms; slower releases just settle where they are
 const MAX_FLING = 3 // px/ms; even a hard flick glides a few decades, not off the end of the scale
 const TAP_SLOP = 6 // px a finger may wander and still count as a tap
 const DOUBLE_TAP_MS = 320
+const TOOLS_AT_START = 3000 // ms the tools show when the app opens, before leaving the ruler alone
+const CARD_GAP = 16 // px of desk between two rulers side by side
+const CARD_LIFT = 0.06 // a ruler picked up shrinks by this share, showing the desk around it
+const SWIPE_SLOP = 10 // px sideways before a drag counts as a swipe to another ruler
+const SWIPE_COMMIT = 0.3 // share of the width past which a released ruler moves on
+const SWIPE_FLICK = 0.35 // px/ms; a quicker release moves on whatever the distance
+const ADD_PULL = 70 // px the empty place past the last ruler must be pulled to start a new one
+const SPRING = 0.0005 // stiffness (1/ms²) of the spring that settles a ruler into place
+const SPRING_DAMPING = 0.037 // 1/ms; a touch under critical, so it lands with the slightest give
 const REFRESH_AFTER = 30 * 60 * 1000 // re-check the rate when the app returns after this long
 const FONT = '"B612", ui-sans-serif, system-ui, sans-serif'
 const PREFS_KEY = 'currency-ruler:prefs'
@@ -76,9 +98,15 @@ const prefs = loadPrefs()
 const cachedEcb = loadCachedRates('ecb')
 const cachedMarket = loadCachedRates('market')
 
+const rulers = savedRulers(prefs)
+const inHand = clamp(Math.round(prefs?.current) || 0, 0, rulers.length - 1)
+
 const state = {
-  a: prefs?.a ?? 'JPY',
-  b: prefs?.b ?? 'USD',
+  // The traveller's few rulers, in swipe order, and the one in hand. a and b are its currencies.
+  rulers,
+  current: inHand,
+  a: rulers[inHand].a,
+  b: rulers[inHand].b,
   // Units per 1 USD from each source. The market source has nothing until its first fetch.
   sources: {
     ecb: { ...cachedEcb, date: cachedEcb?.date ?? SNAPSHOT.date, rates: { ...SNAPSHOT.rates, ...cachedEcb?.rates } },
@@ -99,8 +127,16 @@ const state = {
   editing: null, // 'a' | 'b' while an amount field has focus
   checking: false,
 }
-// A saved pair whose rates aren't on this device (say, storage was cleared) starts over.
-if (!canPair(state.a, state.b)) Object.assign(state, { a: 'JPY', b: 'USD', cursor: null })
+// A saved ruler whose rates aren't on this device (say, storage was cleared) gives way to one
+// that has them, or to Yen · Dollars, which the bundled rates always cover.
+if (!canPair(state.a, state.b)) {
+  let i = state.rulers.findIndex(priceable)
+  if (i < 0) {
+    state.rulers.unshift({ a: 'JPY', b: 'USD' })
+    i = 0
+  }
+  Object.assign(state, { current: i, a: state.rulers[i].a, b: state.rulers[i].b, cursor: null })
+}
 state.R = liveR()
 state.cursor ??= home()
 
@@ -110,6 +146,12 @@ function loadPrefs() {
     if (p && CURRENCIES[p.a] && CURRENCIES[p.b] && p.a !== p.b) return p
   } catch {}
   return null
+}
+
+// Rulers saved before there could be several become the first of the set.
+function savedRulers(p) {
+  const list = (Array.isArray(p?.rulers) ? p.rulers : []).filter((r) => CURRENCIES[r?.a] && CURRENCIES[r?.b] && r.a !== r.b).map(({ a, b }) => ({ a, b }))
+  return list.length ? list : [{ a: p?.a ?? 'JPY', b: p?.b ?? 'USD' }]
 }
 
 function validCursor(c) {
@@ -125,7 +167,17 @@ function savePrefs() {
     try {
       localStorage.setItem(
         PREFS_KEY,
-        JSON.stringify({ a: state.a, b: state.b, cursor: state.cursor, span: state.span, layout: state.layout, theme: state.theme, recent: state.recent }),
+        JSON.stringify({
+          rulers: state.rulers,
+          current: state.current,
+          a: state.a,
+          b: state.b,
+          cursor: state.cursor,
+          span: state.span,
+          layout: state.layout,
+          theme: state.theme,
+          recent: state.recent,
+        }),
       )
     } catch {}
   }, 300)
@@ -144,12 +196,21 @@ function canPair(a, b) {
   const rates = ratesFor(a, b)
   return Boolean(rates?.[a] && rates?.[b])
 }
+function priceable(r) {
+  return canPair(r.a, r.b)
+}
+function hasRate(code) {
+  return Boolean(unitsPerUsd(code))
+}
 function unitsPerUsd(code) {
   return state.sources.ecb.rates[code] ?? state.sources.market?.rates[code] ?? NaN
 }
+function pairR(a, b) {
+  const rates = ratesFor(a, b)
+  return Math.log10(rates[a] / rates[b])
+}
 function liveR() {
-  const rates = ratesFor(state.a, state.b)
-  return Math.log10(rates[state.a] / rates[state.b])
+  return pairR(state.a, state.b)
 }
 
 const readingPosA = (c) => (c.side === 'a' ? c.pos : c.pos + state.R)
@@ -276,7 +337,7 @@ function onResize() {
   els.canvas.width = Math.round(w * dpr)
   els.canvas.height = Math.round(h * dpr)
   M = metricsFor(w)
-  els.ruler.style.setProperty('--label-x', `${M.labelX}px`)
+  els.app.style.setProperty('--label-x', `${M.labelX}px`) // the ghost cards place their amounts by it too
   render()
 }
 
@@ -302,7 +363,7 @@ function draw() {
   const k = kNow()
   const gap = M.fs * 2.05
   ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.clearRect(0, 0, els.canvas.width, els.canvas.height)
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
 
   const ticksA = scaleTicks('a', lo, hi, k, gap)
   const ticksB = scaleTicks('b', lo - state.R, hi - state.R, k, gap)
@@ -429,8 +490,9 @@ function readings() {
 }
 
 // The amounts on the line are inputs sized to what they hold.
+const pillWidth = (text) => `calc(${Math.max(4, text.length + 1)}ch + 20px)`
 function fitPill(input) {
-  input.style.width = `calc(${Math.max(4, input.value.length + 1)}ch + 20px)`
+  input.style.width = pillWidth(input.value)
 }
 
 let announceTimer = 0
@@ -446,11 +508,11 @@ function renderDom() {
 }
 
 // Reads in the ruler's own order: left-hand currency first, and 1 of whichever is worth more.
-function rateText() {
-  const A = CURRENCIES[state.a]
-  const B = CURRENCIES[state.b]
-  const x = formatRate(10 ** Math.abs(state.R))
-  return state.R >= 0 ? `${A.symbol}${x} = ${B.symbol}1` : `${A.symbol}1 = ${B.symbol}${x}`
+function rateText(a = state.a, b = state.b, R = state.R) {
+  const A = CURRENCIES[a]
+  const B = CURRENCIES[b]
+  const x = formatRate(10 ** Math.abs(R))
+  return R >= 0 ? `${A.symbol}${x} = ${B.symbol}1` : `${A.symbol}1 = ${B.symbol}${x}`
 }
 
 function renderStatus() {
@@ -473,6 +535,7 @@ function renderStatus() {
   els.status.setAttribute('aria-label', `${text}. Show rate details`)
   // ExchangeRate-API's terms ask for a visible credit wherever its rates are shown.
   els.credit.hidden = src !== 'market'
+  els.app.classList.toggle('has-credit', src === 'market')
   renderRateSheet()
 }
 
@@ -513,10 +576,15 @@ function renderRateSheet() {
 function syncCurrencyUi() {
   const A = CURRENCIES[state.a]
   const B = CURRENCIES[state.b]
+  const n = state.rulers.length
   setText(els.nameA, A.short)
   setText(els.nameB, B.short)
-  els.pickA.setAttribute('aria-label', `Left-hand currency: ${A.name}. Change`)
-  els.pickB.setAttribute('aria-label', `Right-hand currency: ${B.name}. Change`)
+  els.ruler.setAttribute(
+    'aria-label',
+    `${A.name} and ${B.name} ruler${n > 1 ? `, ${state.current + 1} of ${n}` : ''}. Drag to slide the scale under the reading line, ` +
+      `swipe sideways for your other rulers, pinch to zoom, double-tap to reset. Up and down arrows step the reading, ` +
+      `left and right switch rulers, plus and minus zoom, 0 resets.`,
+  )
   els.amtA.setAttribute('aria-label', `Amount in ${A.name}`)
   els.amtB.setAttribute('aria-label', `Amount in ${B.name}`)
 }
@@ -692,11 +760,34 @@ els.ruler.addEventListener('pointerdown', (e) => {
   try {
     els.ruler.setPointerCapture(e.pointerId)
   } catch {} // a pointer the browser no longer tracks can't be captured; the drag still works
+  // A tap that stops the scale gliding just stops it; it doesn't also bring up the tools.
+  const wasMoving = Boolean(glide || motion)
   stopMotion()
   tapFocus = null
   if (pointers.size === 1) {
-    gesture = { type: 'scroll', start: p, lastY: p.y, moved: false, track: [[performance.now(), p.y]], field: pillAt(e), pointerType: e.pointerType }
+    const now = performance.now()
+    if (deck.raf && Math.abs(deck.x) > 2) {
+      // Catch a ruler that is still sliding into place, and carry on swiping it.
+      cancelAnimationFrame(deck.raf)
+      deck.raf = 0
+      gesture = { type: 'deck', startX: e.clientX, baseX: deck.x, past: false, track: [[now, e.clientX]], pointerType: e.pointerType }
+      return
+    }
+    if (deck.raf) putDown()
+    gesture = {
+      type: 'scroll',
+      start: p,
+      startX: e.clientX,
+      lastY: p.y,
+      moved: false,
+      track: [[now, p.y]],
+      field: pillAt(e),
+      wasMoving,
+      pointerType: e.pointerType,
+    }
   } else if (pointers.size === 2) {
+    if (gesture?.type === 'deck') releaseDeck(0, gesture)
+    hideTools()
     // Pinching zooms around the line; the reading stays put.
     const [p1, p2] = [...pointers.values()]
     gesture = { type: 'pinch', d0: spread(p1, p2), span0: state.span }
@@ -709,9 +800,22 @@ els.ruler.addEventListener('pointermove', (e) => {
   pointers.set(e.pointerId, p)
   const g = gesture
   if (g?.type === 'scroll') {
-    if (!g.moved && Math.abs(p.y - g.start.y) > TAP_SLOP) {
-      g.moved = true
-      els.ruler.classList.add('dragging')
+    if (!g.moved) {
+      // Sideways picks up another ruler; up and down slides the scale. Whichever shows first wins.
+      const dx = e.clientX - g.startX
+      const dy = p.y - g.start.y
+      if (Math.abs(dx) > SWIPE_SLOP && Math.abs(dx) > Math.abs(dy) * 1.2 && !flipping) {
+        Object.assign(g, { type: 'deck', baseX: 0, past: false, track: [[performance.now(), e.clientX]] })
+        els.ruler.classList.add('dragging')
+        pickUp()
+        dragDeck(g, e.clientX)
+        return
+      }
+      if (Math.abs(dy) > TAP_SLOP) {
+        g.moved = true
+        els.ruler.classList.add('dragging')
+        hideTools()
+      }
     }
     if (!g.moved) return
     scrollBy(p.y - g.lastY, g.pointerType)
@@ -719,6 +823,8 @@ els.ruler.addEventListener('pointermove', (e) => {
     const now = performance.now()
     g.track.push([now, p.y])
     while (g.track.length > 2 && now - g.track[0][0] > 100) g.track.shift()
+  } else if (g?.type === 'deck') {
+    dragDeck(g, e.clientX)
   } else if (g?.type === 'pinch' && pointers.size >= 2) {
     const [p1, p2] = [...pointers.values()]
     zoomTo((g.span0 * g.d0) / spread(p1, p2))
@@ -735,6 +841,10 @@ function endPointer(e) {
   const g = gesture
   gesture = null
   els.ruler.classList.remove('dragging')
+  if (g?.type === 'deck') {
+    releaseDeck(e.type === 'pointerup' ? releaseSpeed(g.track) : 0, g)
+    return
+  }
   if (g?.type !== 'scroll') {
     savePrefs()
     return
@@ -743,18 +853,24 @@ function endPointer(e) {
     if (e.type === 'pointerup') tap(g, e)
     return
   }
-  // A finger that came to rest before lifting releases nothing; otherwise use its last 100ms.
-  const [t0, y0] = g.track[0]
-  const [t1, y1] = g.track[g.track.length - 1]
-  const still = performance.now() - t1 > 60
-  const v = !still && t1 - t0 > 10 ? (y1 - y0) / (t1 - t0) : 0
+  const v = releaseSpeed(g.track)
   if (e.type === 'pointerup' && Math.abs(v) > FLICK && !reduceMotion.matches) fling(clamp(v, -MAX_FLING, MAX_FLING), g.pointerType)
   else settle()
+}
+
+// px/ms over a finger's last 100ms. One that came to rest before lifting releases nothing.
+function releaseSpeed(track) {
+  const [t0, x0] = track[0]
+  const [t1, x1] = track[track.length - 1]
+  const still = performance.now() - t1 > 60
+  return !still && t1 - t0 > 10 ? (x1 - x0) / (t1 - t0) : 0
 }
 els.ruler.addEventListener('pointerup', endPointer)
 els.ruler.addEventListener('pointercancel', endPointer)
 
-// A tap on a pill opens it for typing; two quick taps anywhere else reset the ruler.
+// A tap on a pill opens it for typing. Anywhere else, one tap brings the tools up or puts them
+// away, and two quick taps reset the ruler (so a single tap waits to be sure it is one).
+let singleTap = 0
 function tap(g, e) {
   if (g.field) {
     tapFocus = g.field
@@ -762,11 +878,13 @@ function tap(g, e) {
     return
   }
   const now = performance.now()
+  clearTimeout(singleTap)
   if (lastTap && now - lastTap.t < DOUBLE_TAP_MS && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
     lastTap = null
     resetView()
   } else {
     lastTap = { t: now, x: e.clientX, y: e.clientY }
+    if (!g.wasMoving) singleTap = setTimeout(toggleTools, DOUBLE_TAP_MS)
   }
 }
 
@@ -786,17 +904,35 @@ els.ruler.addEventListener(
     if (!size.h) return
     stopMotion()
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? size.h : 1
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey && !e.metaKey) {
+      wheelSideways(e.deltaX * unit)
+      return
+    }
     if (e.ctrlKey || e.metaKey) {
       if (safariPinch) return
       zoomTo(state.span * Math.exp(clamp(e.deltaY * unit, -60, 60) * 0.01))
     } else {
       scrollBy(-e.deltaY * unit, 'wheel')
+      hideTools()
       clearTimeout(wheelSettle)
       wheelSettle = setTimeout(settle, 180)
     }
   },
   { passive: false },
 )
+
+// A trackpad swipe sideways moves one ruler along; it has to pause before it moves another.
+const sideways = { sum: 0, done: false, timer: 0 }
+function wheelSideways(dx) {
+  clearTimeout(sideways.timer)
+  sideways.timer = setTimeout(() => Object.assign(sideways, { sum: 0, done: false }), 200)
+  if (sideways.done) return
+  sideways.sum += dx
+  if (Math.abs(sideways.sum) < 60) return
+  sideways.done = true
+  const n = neighbour(sideways.sum > 0 ? 1 : -1)
+  if (typeof n === 'number') switchTo(n)
+}
 
 // Safari reports trackpad pinches as gesture events rather than ctrl-wheel.
 let safariPinch = null
@@ -822,6 +958,12 @@ els.ruler.addEventListener('keydown', (e) => {
     case 'ArrowDown':
       nudge(e.key === 'ArrowUp' ? -1 : 1, e.shiftKey)
       break
+    case 'ArrowLeft':
+    case 'ArrowRight': {
+      const n = neighbour(e.key === 'ArrowRight' ? 1 : -1)
+      if (typeof n === 'number') switchTo(n)
+      break
+    }
     case '+':
     case '=':
       zoomTo(state.span / 2, 200)
@@ -880,17 +1022,300 @@ for (const [side, input] of [['a', els.amtA], ['b', els.amtB]]) {
   })
 }
 
+// ---------- tools
+
+// The ruler is the interface; the tools come when wanted. They show for a moment when the app
+// opens, a tap on the ruler brings them back or puts them away, and moving the scale clears them.
+let toolsTimer = 0
+function showTools(linger) {
+  clearTimeout(toolsTimer)
+  els.app.classList.remove('tools-hidden')
+  if (linger) toolsTimer = setTimeout(hideTools, linger)
+}
+function hideTools() {
+  clearTimeout(toolsTimer)
+  els.app.classList.add('tools-hidden')
+}
+const toggleTools = () => (els.app.classList.contains('tools-hidden') ? showTools() : hideTools())
+// Moving through them with the keyboard brings them up.
+for (const tools of els.app.querySelectorAll('.tools')) tools.addEventListener('focusin', () => showTools())
+
+// The names of the ruler in hand stay up for a moment after it changes, tools or not.
+let namingTimer = 0
+function flashNames(ms = 1500) {
+  clearTimeout(namingTimer)
+  els.app.classList.add('naming')
+  namingTimer = setTimeout(() => els.app.classList.remove('naming'), ms)
+}
+
+// ---------- the set of rulers
+//
+// A traveller keeps a few rulers (Yen · Dollars, Dollars · Won…) and swipes sideways between
+// them, like picking up another ruler from the desk. The one in hand is the live canvas; while a
+// swipe is on, its neighbours are painted once onto ghost cards that slide alongside it. The
+// price on the line comes along to whichever ruler is taken up.
+
+const deck = {
+  x: 0, // px the ruler in hand sits from its place
+  v: 0, // px/ms, while it springs into place
+  lift: 0, // 0 lying on the desk … 1 picked up
+  liftFrom: 0, // the lift at release; it eases off as the ruler comes to rest
+  raf: 0,
+}
+
+function makeGhost() {
+  const el = document.createElement('div')
+  el.className = 'ruler card ghost'
+  el.hidden = true
+  el.setAttribute('aria-hidden', 'true')
+  el.innerHTML =
+    '<canvas></canvas><div class="glass"><span class="band"></span><span class="hair"></span><span class="pill pill-a"></span><span class="pill pill-b"></span></div>' +
+    '<div class="plate"><span class="tag"></span><span class="tag"></span></div>' +
+    '<div class="slot-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span>New ruler</span></div>'
+  els.ruler.before(el)
+  const [pillA, pillB] = el.querySelectorAll('.pill')
+  const [nameA, nameB] = el.querySelectorAll('.plate .tag')
+  return { el, ctx: el.querySelector('canvas').getContext('2d'), pillA, pillB, nameA, nameB, holds: null }
+}
+// The card to the left (-1, the ruler before) and to the right (1, the ruler after).
+const ghosts = { [-1]: makeGhost(), [1]: makeGhost() }
+
+// The next ruler in a direction that has rates on this device. Past the last one lies the
+// place for a new one.
+function neighbour(dir) {
+  for (let i = state.current + dir; i >= 0 && i < state.rulers.length; i += dir) if (priceable(state.rulers[i])) return i
+  return dir > 0 ? 'add' : null
+}
+
+// The price on the line in each currency of the ruler in hand: the reading first, with its step.
+function price() {
+  const c = state.cursor
+  const other = c.side === 'a' ? 'b' : 'a'
+  const pa = cursorPosA()
+  const read = (side) => valueAt(side === 'a' ? pa : pa - state.R, side)
+  return [
+    { code: state[c.side], value: read(c.side), step: c.step },
+    { code: state[other], value: read(other), step: null },
+  ]
+}
+
+// Where that price sits on the ruler now in state: in the same currency if it has one,
+// otherwise as the same value in its left-hand currency.
+function carry(p) {
+  for (const { code, value, step } of p) {
+    if (code === state.a) return { side: 'a', pos: posOf(value, 'a'), step }
+    if (code === state.b) return { side: 'b', pos: posOf(value, 'b'), step }
+  }
+  const value = (p[0].value / unitsPerUsd(p[0].code)) * unitsPerUsd(state.a)
+  return { side: 'a', pos: posOf(value, 'a'), step: null }
+}
+
+// Paints a ghost card with ruler i of the set and the price carried onto it, or with the empty
+// place for a new ruler ('add'), or hides it (null).
+function paintGhost(g, holds) {
+  g.holds = holds
+  g.el.hidden = holds === null
+  g.el.classList.toggle('slot', holds === 'add')
+  if (typeof holds !== 'number') return
+  const { w, h, dpr } = size
+  const canvas = g.ctx.canvas
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr)
+    canvas.height = Math.round(h * dpr)
+  }
+  g.el.classList.toggle('middle', state.layout === 'middle')
+  const r = state.rulers[holds]
+  const p = price()
+  const inHand = { a: state.a, b: state.b, R: state.R, cursor: state.cursor }
+  const live = { ctx, frame }
+  try {
+    Object.assign(state, { a: r.a, b: r.b, R: pairR(r.a, r.b) })
+    state.cursor = carry(p)
+    ctx = g.ctx
+    draw()
+    const amounts = readings()
+    for (const [pill, text] of [[g.pillA, amounts.a], [g.pillB, amounts.b]]) {
+      setText(pill, text)
+      pill.style.width = pillWidth(text)
+    }
+    setText(g.nameA, CURRENCIES[r.a].short)
+    setText(g.nameB, CURRENCIES[r.b].short)
+  } finally {
+    ;({ ctx, frame } = live)
+    Object.assign(state, inHand)
+  }
+}
+
+const pitchNow = () => size.w * (1 - CARD_LIFT * deck.lift) + CARD_GAP
+
+function layDeck() {
+  const s = 1 - CARD_LIFT * deck.lift
+  const pitch = pitchNow()
+  const place = (el, x) => (el.style.transform = `translate3d(${x}px, 0, 0) scale(${s})`)
+  place(els.ruler, deck.x)
+  for (const dir of [-1, 1]) if (ghosts[dir].holds !== null) place(ghosts[dir].el, deck.x + dir * pitch)
+  els.app.style.setProperty('--lift', deck.lift.toFixed(3))
+  // The dot follows whichever ruler is mostly in view.
+  const toward = deck.x < 0 ? 1 : -1
+  const near = ghosts[toward].holds
+  markDot(Math.abs(deck.x) > pitch / 2 && typeof near === 'number' ? near : state.current)
+}
+
+const buzz = (pointerType, ms) => pointerType === 'touch' && navigator.vibrate?.(ms)
+const rubberBand = (x, d) => Math.sign(x) * d * (1 - 1 / ((Math.abs(x) * 0.55) / d + 1))
+
+function pickUp() {
+  hideTools()
+  clearTimeout(namingTimer)
+  els.app.classList.remove('naming')
+  els.app.classList.add('swiping')
+  paintGhost(ghosts[-1], neighbour(-1))
+  paintGhost(ghosts[1], neighbour(1))
+}
+
+// The ruler follows the finger. Where there's no ruler to go to, it gives like a rubber band.
+function dragDeck(g, clientX) {
+  const raw = g.baseX + clientX - g.startX
+  const toward = raw < 0 ? 1 : -1 // the side coming into view
+  const pitch = pitchNow()
+  const ahead = typeof ghosts[toward].holds === 'number'
+  deck.x = ahead ? clamp(raw, -pitch, pitch) : rubberBand(raw, size.w * 0.6)
+  deck.lift = Math.max(deck.lift, Math.min(1, Math.abs(raw) / 60))
+  // A light tick as it passes the point where letting go moves on.
+  const past = ahead && Math.abs(deck.x) > size.w * SWIPE_COMMIT
+  if (past && !g.past) buzz(g.pointerType, 6)
+  g.past = past
+  layDeck()
+  const now = performance.now()
+  g.track.push([now, clientX])
+  while (g.track.length > 2 && now - g.track[0][0] > 100) g.track.shift()
+}
+
+function releaseDeck(v, g) {
+  const pitch = pitchNow()
+  const toward = deck.x < 0 ? 1 : -1
+  const flick = v < 0 ? 1 : -1 // flicking left brings in the ruler on the right
+  let dir = 0
+  if (Math.abs(v) > SWIPE_FLICK && (flick === toward || Math.abs(deck.x) < 30)) dir = flick
+  else if (Math.abs(deck.x) > (g.baseX ? pitch / 2 : size.w * SWIPE_COMMIT)) dir = toward
+  const target = dir ? ghosts[dir].holds : null
+  if (typeof target === 'number') {
+    // The ruler in hand goes down on the side it's leaving toward, and the one taken up is
+    // already where its ghost was; from there it springs into place.
+    paintGhost(ghosts[-dir], state.current)
+    takeUp(target)
+    deck.x += dir * pitch
+    paintGhost(ghosts[dir], neighbour(dir))
+    buzz(g.pointerType, 10)
+  } else if (ghosts[toward].holds === 'add' && Math.abs(deck.x) > ADD_PULL) {
+    startAdding()
+  }
+  deck.v = clamp(v, -4, 4)
+  deck.liftFrom = deck.lift
+  springHome()
+}
+
+function springHome() {
+  cancelAnimationFrame(deck.raf)
+  if (reduceMotion.matches) return putDown()
+  let last = performance.now()
+  const step = (now) => {
+    let dt = Math.min(32, now - last)
+    last = now
+    while (dt > 0) {
+      const h = Math.min(4, dt)
+      dt -= h
+      deck.v += (-SPRING * deck.x - SPRING_DAMPING * deck.v) * h
+      deck.x += deck.v * h
+    }
+    // Set down as it arrives.
+    deck.lift = Math.min(deck.liftFrom, Math.abs(deck.x) / 90)
+    if (Math.abs(deck.x) < 0.3 && Math.abs(deck.v) < 0.02) return putDown()
+    layDeck()
+    deck.raf = requestAnimationFrame(step)
+  }
+  deck.raf = requestAnimationFrame(step)
+}
+
+function putDown() {
+  cancelAnimationFrame(deck.raf)
+  Object.assign(deck, { raf: 0, x: 0, v: 0, lift: 0 })
+  els.app.classList.remove('swiping')
+  els.ruler.style.transform = ''
+  for (const g of Object.values(ghosts)) {
+    g.el.hidden = true
+    g.el.style.transform = ''
+    g.holds = null
+  }
+  markDot(state.current)
+  flashNames()
+}
+
+// Takes up ruler i of the set, bringing the price on the line along.
+function takeUp(i) {
+  const p = price()
+  stopMotion()
+  state.current = i
+  state.a = state.rulers[i].a
+  state.b = state.rulers[i].b
+  settleR()
+  state.cursor = carry(p)
+  syncCurrencyUi()
+  render()
+  markDot(i)
+  savePrefs()
+  const amounts = readings()
+  clearTimeout(announceTimer)
+  announceTimer = setTimeout(
+    () => setText(els.live, `${CURRENCIES[state.a].name} and ${CURRENCIES[state.b].name}, ruler ${i + 1} of ${state.rulers.length}. ${amounts.a} is ${amounts.b}`),
+    300,
+  )
+}
+
+// Slides ruler i into hand without a finger: the arrow keys, a trackpad, a ruler just added.
+function switchTo(i) {
+  if (i === state.current || !priceable(state.rulers[i]) || flipping || gesture?.type === 'deck') return
+  if (reduceMotion.matches || !size.w) {
+    takeUp(i)
+    flashNames()
+    return
+  }
+  const dir = i > state.current ? 1 : -1
+  cancelAnimationFrame(deck.raf)
+  hideTools()
+  els.app.classList.remove('naming')
+  els.app.classList.add('swiping')
+  paintGhost(ghosts[-dir], state.current)
+  takeUp(i)
+  deck.x += dir * pitchNow()
+  paintGhost(ghosts[dir], neighbour(dir))
+  deck.v = 0
+  deck.liftFrom = deck.lift
+  layDeck()
+  springHome()
+}
+
+let dotOn = -1
+function renderDots() {
+  els.dots.hidden = state.rulers.length < 2
+  els.dots.innerHTML = '<span></span>'.repeat(state.rulers.length)
+  dotOn = -1
+  markDot(state.current)
+}
+function markDot(i) {
+  if (i === dotOn) return
+  dotOn = i
+  for (const [j, dot] of [...els.dots.children].entries()) dot.toggleAttribute('data-on', j === i)
+}
+
 // ---------- currencies
 
 els.swap.addEventListener('click', swapSides)
 
+// Changes one side of the ruler in hand.
 function setCurrency(which, code) {
   const other = which === 'a' ? 'b' : 'a'
-  if (code === state[which]) return
-  if (code === state[other]) {
-    syncCurrencyUi()
-    return swapSides()
-  }
+  if (code === state[which] || code === state[other]) return
   if (!canPair(which === 'a' ? code : state.a, which === 'b' ? code : state.b)) return
   // Keep the amount on the unchanged side; the changed side re-reads against it.
   const pa = cursorPosA()
@@ -900,6 +1325,7 @@ function setCurrency(which, code) {
   state[which] = code
   settleR()
   state.cursor = { side: other, pos: posOf(keep, other), step }
+  storeRuler()
   syncCurrencyUi()
   savePrefs()
   requestRender()
@@ -908,7 +1334,7 @@ function setCurrency(which, code) {
 
 let flipping = false
 async function swapSides() {
-  if (flipping) return
+  if (flipping || deck.raf) return // one motion at a time: a ruler is still sliding into place
   els.swap.classList.toggle('turned')
   if (reduceMotion.matches || !els.ruler.animate) {
     applySwap()
@@ -932,15 +1358,27 @@ function applySwap() {
   ;[state.a, state.b] = [state.b, state.a]
   state.R = -R
   state.cursor = { ...state.cursor, side: state.cursor.side === 'a' ? 'b' : 'a' }
+  storeRuler()
   syncCurrencyUi()
   savePrefs()
   requestRender()
 }
 
-// ---------- currency picker
+// The ruler in hand keeps its place in the set as its currencies change.
+function storeRuler() {
+  Object.assign(state.rulers[state.current], { a: state.a, b: state.b })
+  renderRulers()
+}
 
-const PICKER_TITLES = { a: 'Left-hand currency', b: 'Right-hand currency' }
-let pickerSide = 'a'
+// ---------- currency picker
+//
+// Every currency is here, but only for setting up rulers in Settings; using the rulers is
+// just swiping between the few a trip needs.
+
+// What the picker is choosing: one side of a ruler. `here` is that side's currency now (none
+// for a new ruler), `other` the opposite side's (none when choosing the first side). Choosing
+// `other` swaps the sides when `canSwap`; otherwise it can't be chosen.
+let picking = { title: '', here: null, other: null, canSwap: false, choose() {} }
 
 const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 const pairNumber = (v) => new Intl.NumberFormat('en-US', { maximumFractionDigits: v >= 100 ? 0 : v >= 10 ? 1 : 2 }).format(v)
@@ -955,16 +1393,16 @@ function pairText(code, other) {
 }
 
 function pickerRow(code) {
-  const here = state[pickerSide]
-  const other = state[pickerSide === 'a' ? 'b' : 'a']
+  const { here, other, canSwap } = picking
   const c = CURRENCIES[code]
-  const usable = code === other || canPair(code, other)
+  const usable = code === other ? canSwap : other ? canPair(code, other) : hasRate(code)
   const symbol = c.symbol.trim() === code ? '' : ` · ${c.symbol.trim()}`
   const place = c.regionNames.length ? ` · ${c.regionNames[0]}${c.regionNames.length > 1 ? ` +${c.regionNames.length - 1}` : ''}` : ''
   // Without market rates on the device yet, most currencies wait for a connection; once they're
   // here, a currency still missing simply isn't offered by any source.
   const missing = state.sources.market ? 'No rate available' : 'Needs a connection'
-  const right = code === here ? 'On the ruler' : code === other ? 'Swap sides' : usable ? pairText(code, other) : missing
+  const right =
+    code === here ? 'On the ruler' : code === other ? (canSwap ? 'Swap sides' : 'Other side') : !usable ? missing : other ? pairText(code, other) : ''
   return `<li><button type="button" class="pick-row" data-code="${code}"${usable ? '' : ' disabled'}${code === here ? ' aria-current="true"' : ''}>
     <span class="pick-main"><span class="pick-name">${escapeHtml(c.name)}</span><span class="pick-sub">${escapeHtml(code + symbol + place)}</span></span>
     <span class="pick-rate">${escapeHtml(right)}</span></button></li>`
@@ -974,8 +1412,7 @@ const pickerSection = (title, codes) => `<h3 class="pick-sec">${escapeHtml(title
 
 function renderPicker() {
   const query = els.pickerQ.value.trim()
-  const here = state[pickerSide]
-  const other = state[pickerSide === 'a' ? 'b' : 'a']
+  const onRuler = [picking.here, picking.other].filter(Boolean)
   let html
   if (query) {
     const hits = searchCurrencies(query)
@@ -983,18 +1420,20 @@ function renderPicker() {
       ? pickerSection(`${hits.length} result${hits.length === 1 ? '' : 's'}`, hits)
       : `<div class="pick-empty"><p class="pick-name">No currency matches “${escapeHtml(query)}”</p><p class="pick-sub">Try a code like VND or a country like Vietnam.</p></div>`
   } else {
-    const recent = state.recent.filter((code) => code !== here && code !== other)
-    html = pickerSection('On the ruler', [here, other]) + (recent.length ? pickerSection('Recent', recent) : '') + pickerSection('All currencies', BY_NAME)
+    const recent = state.recent.filter((code) => !onRuler.includes(code))
+    html =
+      (onRuler.length ? pickerSection('On the ruler', onRuler) : '') +
+      (recent.length ? pickerSection('Recent', recent) : '') +
+      pickerSection('All currencies', BY_NAME)
   }
   els.pickerList.innerHTML =
     html +
     `<p class="pick-foot">Rates come from the European Central Bank for 30 major currencies, and from <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">Rates By Exchange Rate API</a> for the rest.</p>`
 }
 
-function openPicker(side) {
-  if (flipping) return // a swap is mid-turn; its sides aren't settled yet
-  pickerSide = side
-  setText(els.pickerTitle, PICKER_TITLES[side])
+function openPicker(what) {
+  picking = what
+  setText(els.pickerTitle, what.title)
   els.pickerQ.value = ''
   renderPicker()
   els.picker.showModal()
@@ -1008,17 +1447,14 @@ function remember(code) {
 }
 
 function choose(code) {
-  const side = pickerSide
   els.picker.close()
-  if (code === state[side]) return
-  remember(state[side])
+  if (code === picking.here) return
+  if (picking.here) remember(picking.here)
   remember(code)
-  setCurrency(side, code)
+  picking.choose(code)
   savePrefs()
 }
 
-els.pickA.addEventListener('click', () => openPicker('a'))
-els.pickB.addEventListener('click', () => openPicker('b'))
 els.pickerQ.addEventListener('input', () => {
   renderPicker()
   els.pickerList.scrollTop = 0
@@ -1036,6 +1472,186 @@ els.pickerQ.addEventListener('keydown', (e) => {
 els.pickerList.addEventListener('click', (e) => {
   const row = e.target.closest('.pick-row')
   if (row && !row.disabled) choose(row.dataset.code)
+})
+
+// ---------- rulers in Settings
+
+const GRIP = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M3.5 6h11M3.5 9h11M3.5 12h11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
+
+function rulerRate(r) {
+  if (priceable(r)) return rateText(r.a, r.b, pairR(r.a, r.b))
+  return state.sources.market ? 'No rate available' : 'Needs a connection'
+}
+
+function renderRulers() {
+  const several = state.rulers.length > 1
+  els.rulerList.innerHTML = state.rulers
+    .map((r, i) => {
+      const A = CURRENCIES[r.a]
+      const B = CURRENCIES[r.b]
+      const names = `${A.short} · ${B.short}`
+      const inHand = i === state.current
+      return `<li class="ruler-row" data-i="${i}">
+        <button type="button" class="ruler-open"${inHand ? ' aria-current="true"' : ''} aria-label="${escapeHtml(`${A.name} and ${B.name}${inHand ? ', in hand' : ''}. Edit`)}">
+          <span class="ruler-names">${escapeHtml(names)}</span><span class="ruler-rate">${escapeHtml(rulerRate(r))}</span></button>
+        ${several ? `<button type="button" class="icon-btn grip" aria-label="Move ${escapeHtml(names)}. Up and down arrows move it.">${GRIP}</button>` : ''}
+      </li>`
+    })
+    .join('')
+  renderDots()
+  if (els.editor.open) renderEditor()
+}
+
+// A new ruler: its left-hand currency, then its right, then it slides into hand.
+function startAdding() {
+  openPicker({
+    title: 'New ruler: left side',
+    here: null,
+    other: null,
+    choose: (a) =>
+      openPicker({ title: 'New ruler: right side', here: null, other: a, canSwap: false, choose: (b) => addRuler(a, b) }),
+  })
+}
+
+function addRuler(a, b) {
+  let i = state.rulers.findIndex((r) => r.a === a && r.b === b)
+  if (i < 0) i = state.rulers.push({ a, b }) - 1
+  renderRulers()
+  syncCurrencyUi()
+  savePrefs()
+  // Behind Settings it can simply change hands; on the desk it slides in.
+  if (els.settings.open) takeUp(i)
+  else switchTo(i)
+}
+
+function moveRuler(from, to) {
+  if (from !== to) {
+    const inHand = state.rulers[state.current]
+    const [r] = state.rulers.splice(from, 1)
+    state.rulers.splice(to, 0, r)
+    state.current = state.rulers.indexOf(inHand)
+    syncCurrencyUi()
+    savePrefs()
+  }
+  renderRulers()
+}
+
+function removeRuler(i) {
+  if (state.rulers.length < 2) return
+  if (i === state.current) {
+    // The nearest other ruler with rates takes its place in hand.
+    const next = [i + 1, i - 1, ...state.rulers.keys()].find((j) => j !== i && state.rulers[j] && priceable(state.rulers[j]))
+    if (next == null) return
+    takeUp(next)
+  }
+  state.rulers.splice(i, 1)
+  if (state.current > i) state.current--
+  els.editor.close()
+  syncCurrencyUi()
+  savePrefs()
+  renderRulers()
+}
+
+// One ruler's currencies. The ruler in hand changes on screen as they're chosen.
+function editRuler(i, side, code) {
+  const r = state.rulers[i]
+  const other = side === 'a' ? 'b' : 'a'
+  if (code === r[side]) return
+  if (i === state.current) {
+    if (code === r[other]) applySwap()
+    else setCurrency(side, code)
+  } else if (code === r[other]) {
+    ;[r.a, r.b] = [r.b, r.a]
+  } else if (canPair(side === 'a' ? code : r.a, side === 'b' ? code : r.b)) {
+    r[side] = code
+  }
+  savePrefs()
+  renderRulers()
+}
+
+let editing = 0 // which ruler the editor shows
+function openEditor(i) {
+  editing = i
+  renderEditor()
+  els.editor.showModal()
+}
+function renderEditor() {
+  const r = state.rulers[editing]
+  if (!r) return els.editor.close()
+  setText(els.editNameA, CURRENCIES[r.a].short)
+  setText(els.editNameB, CURRENCIES[r.b].short)
+  setText(els.editSideA, `Left · ${r.a}`)
+  setText(els.editSideB, `Right · ${r.b}`)
+  els.editA.setAttribute('aria-label', `Left-hand currency: ${CURRENCIES[r.a].name}. Change`)
+  els.editB.setAttribute('aria-label', `Right-hand currency: ${CURRENCIES[r.b].name}. Change`)
+  setText(els.editRate, rulerRate(r))
+  els.editRemove.disabled = state.rulers.length < 2
+}
+function pickFor(side) {
+  const i = editing
+  const r = state.rulers[i]
+  openPicker({
+    title: side === 'a' ? 'Left-hand currency' : 'Right-hand currency',
+    here: r[side],
+    other: r[side === 'a' ? 'b' : 'a'],
+    canSwap: true,
+    choose: (code) => editRuler(i, side, code),
+  })
+}
+
+els.editA.addEventListener('click', () => pickFor('a'))
+els.editB.addEventListener('click', () => pickFor('b'))
+els.editSwap.addEventListener('click', () => editRuler(editing, 'a', state.rulers[editing].b))
+els.editRemove.addEventListener('click', () => removeRuler(editing))
+els.addRuler.addEventListener('click', startAdding)
+els.rulerList.addEventListener('click', (e) => {
+  const open = e.target.closest('.ruler-open')
+  if (open) openEditor(Number(open.closest('.ruler-row').dataset.i))
+})
+
+// Drag a ruler by its grip to reorder the set; the others make room as it passes.
+let reorder = null
+els.rulerList.addEventListener('pointerdown', (e) => {
+  const grip = e.target.closest('.grip')
+  if (!grip) return
+  e.preventDefault()
+  const row = grip.closest('.ruler-row')
+  const rows = [...els.rulerList.children]
+  const from = rows.indexOf(row)
+  try {
+    grip.setPointerCapture(e.pointerId)
+  } catch {}
+  reorder = { id: e.pointerId, row, rows, from, to: from, y0: e.clientY, h: row.offsetHeight }
+  row.classList.add('moving')
+})
+els.rulerList.addEventListener('pointermove', (e) => {
+  const r = reorder
+  if (!r || e.pointerId !== r.id) return
+  const dy = clamp(e.clientY - r.y0, -r.from * r.h, (r.rows.length - 1 - r.from) * r.h)
+  r.to = clamp(r.from + Math.round(dy / r.h), 0, r.rows.length - 1)
+  r.row.style.transform = `translateY(${dy}px)`
+  r.rows.forEach((row, j) => {
+    if (row === r.row) return
+    const shift = j > r.from && j <= r.to ? -r.h : j < r.from && j >= r.to ? r.h : 0
+    row.style.transform = shift ? `translateY(${shift}px)` : ''
+  })
+})
+function endReorder(e) {
+  const r = reorder
+  if (!r || e.pointerId !== r.id) return
+  reorder = null
+  moveRuler(r.from, r.to)
+}
+els.rulerList.addEventListener('pointerup', endReorder)
+els.rulerList.addEventListener('pointercancel', endReorder)
+els.rulerList.addEventListener('keydown', (e) => {
+  const grip = e.target.closest('.grip')
+  if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return
+  e.preventDefault()
+  const from = Number(grip.closest('.ruler-row').dataset.i)
+  const to = clamp(from + (e.key === 'ArrowUp' ? -1 : 1), 0, state.rulers.length - 1)
+  moveRuler(from, to)
+  els.rulerList.children[to]?.querySelector('.grip')?.focus()
 })
 
 // ---------- rates
@@ -1067,6 +1683,7 @@ function refreshRates() {
     state.checking = false
     if (Math.abs(liveR() - state.R) > 1e-9) animateR(liveR())
     if (els.picker.open) renderPicker()
+    renderRulers()
     requestRender()
   })
 }
@@ -1090,9 +1707,19 @@ function applyLayout() {
   els.optMiddle.checked = state.layout === 'middle'
 }
 
-els.openSettings.addEventListener('click', () => els.settings.showModal())
+let rulerAtOpen = ''
+const rulerKey = () => `${state.a}/${state.b}`
+els.openSettings.addEventListener('click', () => {
+  rulerAtOpen = rulerKey()
+  renderRulers()
+  els.settings.showModal()
+})
+// Back on the desk with a different ruler in hand, it says which.
+els.settings.addEventListener('close', () => {
+  if (rulerKey() !== rulerAtOpen) flashNames(2000)
+})
 // A tap on the dimmed backdrop closes a sheet.
-for (const sheet of [els.settings, els.rateSheet, els.picker]) {
+for (const sheet of [els.settings, els.rateSheet, els.picker, els.editor]) {
   sheet.addEventListener('click', (e) => {
     if (e.target === sheet) sheet.close()
   })
@@ -1132,6 +1759,8 @@ els.optMiddle.addEventListener('change', () => {
 applyLayout()
 applyTheme()
 syncCurrencyUi()
+renderRulers()
+showTools(TOOLS_AT_START)
 darkScheme.addEventListener('change', () => {
   if (state.theme === 'system') applyTheme()
 })
@@ -1142,6 +1771,7 @@ refreshRates()
 
 const updateToast = $('update-toast')
 setupInstall()
+setupShare()
 $('update-reload').addEventListener('click', () => location.reload())
 // __APP_VERSION__ and __APP_COMMIT__ are filled in by vite.config.js at build time.
 $('about').textContent = `Version ${__APP_VERSION__} · ${__APP_COMMIT__}`

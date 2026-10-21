@@ -148,7 +148,7 @@ export function tickLabel(m, n, cur) {
 export function formatAmount(v, cur, step) {
   if (v === 0) return `${cur.symbol}0`
   if (!(v > 0) || !Number.isFinite(v)) return ''
-  if (v >= 1e9) return cur.symbol + compact.format(v) // ¥1.2B, $3.4T
+  if (v >= 1e6) return cur.symbol + compactAmount(v, step) // ¥860M, $5.44M
   let d
   if (step) {
     d = Math.max(0, -Math.floor(Math.log10(step) + 1e-9))
@@ -158,9 +158,22 @@ export function formatAmount(v, cur, step) {
     const sig = Math.max(0, 1 - Math.floor(Math.log10(v)))
     // Small amounts of a currency without decimals keep only the digits they need: ¥1, ¥6.3.
     if (cur.minor === 0) return cur.symbol + upTo(v < 10 ? Math.min(sig, 8) : 0).format(v)
-    d = Math.max(cur.minor, sig)
+    // Cents matter on a coffee, not on a car: from 1,000 up a converted amount drops them.
+    d = v >= 1000 ? 0 : Math.max(cur.minor, sig)
   }
   return cur.symbol + num(Math.min(d, 8)).format(v)
+}
+
+// Millions and up are written short so they fit a pill. A reading keeps the digits its step
+// needs (¥5.438M when zoomed in close); a converted amount keeps three ($5.44M).
+const compactFormatters = new Map()
+const convertedCompact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumSignificantDigits: 3 })
+function compactAmount(v, step) {
+  if (!step) return convertedCompact.format(v)
+  const unit = 10 ** (3 * Math.min(4, Math.floor(Math.log10(v) / 3))) // M, B, T
+  const d = Math.min(3, Math.max(0, Math.ceil(Math.log10(unit / step) - 1e-9)))
+  if (!compactFormatters.has(d)) compactFormatters.set(d, new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: d }))
+  return compactFormatters.get(d).format(v)
 }
 
 const rateDecimals = (x) => (x >= 10000 ? 0 : Math.min(6, Math.max(2, 3 - Math.floor(Math.log10(x)))))
