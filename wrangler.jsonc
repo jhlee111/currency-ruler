@@ -4,5 +4,8 @@
   "compatibility_date": "2026-10-01",
   "assets": {
     "directory": "./dist"
-  }
+  },
+  // The app's address. Cloudflare creates the DNS record and certificate on deploy;
+  // currency-ruler.jhlee111.workers.dev keeps working alongside it.
+  "routes": [{ "pattern": "fx-ruler.subtl.ink", "custom_domain": true }]
 }
