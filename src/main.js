@@ -35,7 +35,7 @@ const els = {
   live: $('live'),
   openSettings: $('open-settings'),
   settings: $('settings'),
-  optMiddle: $('opt-middle'),
+  layoutOptions: $('layout-options'),
   themeOptions: $('theme-options'),
   themeColor: $('theme-color'),
   rateSheet: $('rate-sheet'),
@@ -1483,6 +1483,11 @@ function rulerRate(r) {
   return state.sources.market ? 'No rate available' : 'Needs a connection'
 }
 
+// Each ruler is drawn as a small one lying flat: the left-hand scale along the top edge, the
+// right-hand one along the bottom, offset by the rate exactly as on the big ruler. So the rate
+// is there to see without being written out; only a ruler that can't be priced says so.
+const DECADE_PX = 64 // one decade of the miniature's ticks (--log-ticks in styles.css)
+
 function renderRulers() {
   const several = state.rulers.length > 1
   els.rulerList.innerHTML = state.rulers
@@ -1491,10 +1496,14 @@ function renderRulers() {
       const B = CURRENCIES[r.b]
       const names = `${A.short} · ${B.short}`
       const inHand = i === state.current
+      const priced = priceable(r)
+      const shift = priced ? (((pairR(r.a, r.b) % 1) + 1) % 1) * DECADE_PX : 0
+      const label = `${A.name} and ${B.name}${priced ? `, ${rulerRate(r)}` : ''}${inHand ? ', in hand' : ''}. Edit`
       return `<li class="ruler-row" data-i="${i}">
-        <button type="button" class="ruler-open"${inHand ? ' aria-current="true"' : ''} aria-label="${escapeHtml(`${A.name} and ${B.name}${inHand ? ', in hand' : ''}. Edit`)}">
-          <span class="ruler-names">${escapeHtml(names)}</span><span class="ruler-rate">${escapeHtml(rulerRate(r))}</span></button>
-        ${several ? `<button type="button" class="icon-btn grip" aria-label="Move ${escapeHtml(names)}. Up and down arrows move it.">${GRIP}</button>` : ''}
+        <button type="button" class="mini${several ? ' gripped' : ''}" style="--shift:${shift.toFixed(1)}px"${inHand ? ' aria-current="true"' : ''} aria-label="${escapeHtml(label)}">
+          <span class="mini-spine"></span><span class="mini-name">${escapeHtml(A.short)}</span><span class="mini-name">${escapeHtml(B.short)}</span>
+          ${priced ? '' : `<span class="mini-note">${escapeHtml(rulerRate(r))}</span>`}</button>
+        ${several ? `<button type="button" class="grip" aria-label="Move ${escapeHtml(names)}. Up and down arrows move it.">${GRIP}</button>` : ''}
       </li>`
     })
     .join('')
@@ -1605,7 +1614,7 @@ els.editSwap.addEventListener('click', () => editRuler(editing, 'a', state.ruler
 els.editRemove.addEventListener('click', () => removeRuler(editing))
 els.addRuler.addEventListener('click', startAdding)
 els.rulerList.addEventListener('click', (e) => {
-  const open = e.target.closest('.ruler-open')
+  const open = e.target.closest('.mini')
   if (open) openEditor(Number(open.closest('.ruler-row').dataset.i))
 })
 
@@ -1621,7 +1630,8 @@ els.rulerList.addEventListener('pointerdown', (e) => {
   try {
     grip.setPointerCapture(e.pointerId)
   } catch {}
-  reorder = { id: e.pointerId, row, rows, from, to: from, y0: e.clientY, h: row.offsetHeight }
+  const h = rows.length > 1 ? rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top : row.offsetHeight
+  reorder = { id: e.pointerId, row, rows, from, to: from, y0: e.clientY, h }
   row.classList.add('moving')
 })
 els.rulerList.addEventListener('pointermove', (e) => {
@@ -1703,8 +1713,10 @@ window.addEventListener('online', refreshRates)
 // ---------- settings
 
 function applyLayout() {
-  els.ruler.classList.toggle('middle', state.layout === 'middle')
-  els.optMiddle.checked = state.layout === 'middle'
+  const middle = state.layout === 'middle'
+  els.ruler.classList.toggle('middle', middle)
+  els.rulerList.classList.toggle('middle', middle) // the miniatures follow suit
+  for (const input of els.layoutOptions.querySelectorAll('input')) input.checked = input.value === state.layout
 }
 
 let rulerAtOpen = ''
@@ -1746,8 +1758,8 @@ els.themeOptions.addEventListener('change', (e) => {
   if (!reduceMotion.matches) els.canvas.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' })
 })
 
-els.optMiddle.addEventListener('change', () => {
-  state.layout = els.optMiddle.checked ? 'middle' : 'edges'
+els.layoutOptions.addEventListener('change', (e) => {
+  state.layout = e.target.value
   applyLayout()
   savePrefs()
   requestRender()

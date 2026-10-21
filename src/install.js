@@ -61,8 +61,8 @@ export function setupInstall() {
   const hint = $('install-hint')
   const sheet = $('install-sheet')
   const body = $('install-body')
-  const item = $('install-item')
   const itemButton = $('install-btn')
+  const itemLabel = $('install-btn-label')
   const settings = $('settings')
   let prompt = null // Chrome and Edge hand over their install dialog to call when we choose
 
@@ -111,8 +111,8 @@ export function setupInstall() {
   }
 
   function render() {
-    item.hidden = standalone()
-    itemButton.textContent = prompt ? 'Install' : inApp ? 'Open in browser' : 'Show me how'
+    itemButton.hidden = standalone()
+    itemLabel.textContent = inApp ? 'Open in browser' : 'Install'
   }
 
   // The hint appears once: from the second visit (straight away in an in-app browser, where

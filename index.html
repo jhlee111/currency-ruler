@@ -170,49 +170,29 @@
           <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 4.5l9 9m0-9-9 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         </button>
       </header>
-      <section class="rulers-set" aria-labelledby="rulers-title">
-        <div class="settings-head">
-          <h3 class="settings-sec" id="rulers-title">Rulers</h3>
-          <span class="setting-desc">Swipe sideways to switch</span>
-        </div>
+      <!-- The set of rulers, each drawn as a small ruler lying flat. -->
+      <section class="rulers-set" aria-label="Rulers">
         <ol class="ruler-list" id="ruler-list"></ol>
-        <button type="button" class="tool wide" id="add-ruler">Add a ruler</button>
+        <button type="button" class="mini mini-add" id="add-ruler" aria-label="Add a ruler"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
       </section>
-      <ul class="settings">
-        <li>
-          <label class="setting">
-            <span class="setting-text">
-              <span class="setting-name">Scales meet in the middle</span>
-              <span class="setting-desc">Ticks grow out from a line down the centre, with the amounts on the outside.</span>
-            </span>
-            <input type="checkbox" role="switch" class="switch" id="opt-middle">
-          </label>
-        </li>
-        <li>
-          <fieldset class="setting setting-themes">
-            <legend class="setting-name">Theme</legend>
-            <div class="themes" id="theme-options"></div>
-          </fieldset>
-        </li>
-        <li>
-          <div class="setting">
-            <span class="setting-text">
-              <span class="setting-name">Share Currency Ruler</span>
-              <span class="setting-desc">A QR code to scan, or the link to send.</span>
-            </span>
-            <button type="button" class="tool" id="share-btn" aria-haspopup="dialog">Share</button>
+      <!-- How it looks, shown rather than described. -->
+      <div class="looks">
+        <fieldset class="look">
+          <legend class="sr-only">Layout</legend>
+          <div class="themes" id="layout-options">
+            <label class="theme-opt"><input type="radio" name="layout" value="edges"><span class="swatch layout-swatch" data-layout="edges" aria-hidden="true"><span class="swatch-part"></span></span><span>Edges</span></label>
+            <label class="theme-opt"><input type="radio" name="layout" value="middle"><span class="swatch layout-swatch" data-layout="middle" aria-hidden="true"><span class="swatch-part"></span></span><span>Middle</span></label>
           </div>
-        </li>
-        <li id="install-item" hidden>
-          <div class="setting">
-            <span class="setting-text">
-              <span class="setting-name">Install app</span>
-              <span class="setting-desc">Opens full screen and works without a connection.</span>
-            </span>
-            <button type="button" class="tool" id="install-btn">Show me how</button>
-          </div>
-        </li>
-      </ul>
+        </fieldset>
+        <fieldset class="look">
+          <legend class="sr-only">Theme</legend>
+          <div class="themes" id="theme-options"></div>
+        </fieldset>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" class="tool" id="share-btn" aria-haspopup="dialog"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3m0 0L8 7m4-4 4 4M7 10H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1"/></svg>Share</button>
+        <button type="button" class="tool" id="install-btn" hidden><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"/></svg><span id="install-btn-label">Install</span></button>
+      </div>
       <p class="about" id="about"></p>
     </form>
   </dialog>
