@@ -1,7 +1,8 @@
-// The app itself is static files (./dist). This Worker only takes the anonymous usage events the
-// app sends to /api/event and writes them to Workers Analytics Engine; everything else goes
-// straight to the files. Nothing personal is kept: no IP, no identifier. The country comes from
-// Cloudflare's own request data.
+// The app itself is static files (./dist). This Worker answers two small requests from it, and
+// everything else goes straight to the files:
+//   GET /api/where   the country of the connection, for a new device's first ruler (src/place.js)
+//   POST /api/event  anonymous usage events, written to Workers Analytics Engine
+// Nothing personal is kept: no IP, no identifier. The country comes from Cloudflare's own request data.
 //
 // Each event is one data point, in fixed columns (scripts/stats.mjs reads them back):
 //   blob1 event      open · swipe · add · edit · remove · flip · type · share · install · theme · layout · rates
@@ -21,7 +22,9 @@ const text = (v, max = 24) => (typeof v === 'string' ? v.slice(0, max) : '')
 
 export default {
   async fetch(request, env) {
-    if (new URL(request.url).pathname === '/api/event') return event(request, env)
+    const { pathname } = new URL(request.url)
+    if (pathname === '/api/event') return event(request, env)
+    if (pathname === '/api/where') return Response.json({ country: request.cf?.country ?? null }, { headers: { 'Cache-Control': 'no-store' } })
     return env.ASSETS.fetch(request)
   },
 }

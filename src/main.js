@@ -5,6 +5,7 @@ import { THEMES, isTheme, resolveTheme } from './themes.js'
 import { setupInstall } from './install.js'
 import { setupShare } from './share.js'
 import { setupStats, track, trackOpen } from './stats.js'
+import { rulerFor, timeZoneRegion, networkRegion } from './place.js'
 import { buildTicks, tickLabel, tickStep, formatAmount, formatRate, parseAmount, niceStep } from './scale.js'
 
 // Coordinates: the ruler is a log10 axis of the left-hand currency (A), small at the top.
@@ -124,6 +125,18 @@ const state = {
   editing: null, // 'a' | 'b' while an amount field has focus
   checking: false,
 }
+// A new device starts with a ruler for where it is: the local currency against the traveller's
+// own (src/place.js). Until rates for it are on the device, or while the network is still saying
+// where this is, a stand-in with rates holds its place (adoptFirstRuler).
+const here = prefs ? null : timeZoneRegion()
+let firstRuler = null
+if (!prefs) {
+  const want = rulerFor(here)
+  const shown = standIn(want)
+  Object.assign(state, { rulers: [shown], current: 0, a: shown.a, b: shown.b })
+  firstRuler = { want, shown: { ...shown }, asking: !here }
+}
+
 // A saved ruler whose rates aren't on this device (say, storage was cleared) gives way to one
 // that has them, or to Yen · Dollars, which the bundled rates always cover.
 if (!canPair(state.a, state.b)) {
@@ -143,6 +156,42 @@ function loadPrefs() {
     if (p && CURRENCIES[p.a] && CURRENCIES[p.b] && p.a !== p.b) return p
   } catch {}
   return null
+}
+
+// The nearest ruler to `want` with rates on the device now: the traveller's own currency stays on
+// the right if it can, and the dollar (or the euro) stands in for one without rates yet.
+function standIn({ a, b }) {
+  const B = hasRate(b) ? b : 'USD'
+  const other = B === 'USD' ? 'EUR' : 'USD'
+  const A = hasRate(a) && a !== B ? a : other
+  return { a: A, b: B }
+}
+
+// The first ruler becomes the one meant for here as soon as it can: when the network has said
+// where this is, or when rates for its currencies arrive. Once the rulers have been changed,
+// they're the traveller's and are left alone.
+function adoptFirstRuler() {
+  const f = firstRuler
+  if (!f) return
+  const r = state.rulers[0]
+  if (state.rulers.length !== 1 || r.a !== f.shown.a || r.b !== f.shown.b) {
+    firstRuler = null
+    return
+  }
+  if ((r.a !== f.want.a || r.b !== f.want.b) && canPair(f.want.a, f.want.b)) {
+    Object.assign(r, f.want)
+    f.shown = { ...f.want }
+    stopMotion()
+    Object.assign(state, { a: r.a, b: r.b })
+    settleR()
+    state.cursor = home()
+    syncCurrencyUi()
+    renderRulers()
+    render()
+    flashNames()
+    savePrefs()
+  }
+  if (!f.asking && r.a === f.want.a && r.b === f.want.b) firstRuler = null
 }
 
 // Rulers saved before there could be several become the first of the set.
@@ -1737,6 +1786,7 @@ function refreshRates() {
     if (Math.abs(liveR() - state.R) > 1e-9) animateR(liveR())
     if (els.picker.open) renderPicker()
     renderRulers()
+    adoptFirstRuler()
     requestRender()
   })
 }
@@ -1828,6 +1878,15 @@ document.fonts?.ready.then(requestRender)
 setupStats(() => ({ pair: `${state.a}/${state.b}`, rulers: state.rulers.length, theme: state.theme, layout: state.layout }))
 trackOpen()
 refreshRates()
+// When the time zone couldn't say where this is, the connection's country can.
+if (firstRuler?.asking) {
+  networkRegion().then((region) => {
+    if (!firstRuler) return
+    firstRuler.asking = false
+    if (region) firstRuler.want = rulerFor(region)
+    adoptFirstRuler()
+  })
+}
 
 // ---------- installed app (PWA)
 
