@@ -585,6 +585,16 @@ button, input, select { font: inherit; color: inherit; }
 .setting-name { font-size: 15px; font-weight: 700; }
 .setting-desc { font-size: 13px; line-height: 1.4; color: var(--muted); }
 
+/* Which build this is, so a phone can be matched to a release. */
+.about {
+  margin: 0;
+  padding: 0 20px 18px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .switch {
   appearance: none;
   flex: none;

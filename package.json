@@ -8,7 +8,7 @@
     "dev": "vite --port 5317 --strictPort",
     "build": "vite build",
     "preview": "vite preview --port 5318 --strictPort",
-    "deploy": "vite build && wrangler deploy",
+    "release": "node scripts/release.mjs",
     "regions": "node scripts/build-regions.mjs",
     "icons": "python3 scripts/make-icons.py"
   },

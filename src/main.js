@@ -1177,6 +1177,8 @@ installBtn.addEventListener('click', async () => {
   renderInstall()
 })
 $('update-reload').addEventListener('click', () => location.reload())
+// __APP_VERSION__ and __APP_COMMIT__ are filled in by vite.config.js at build time.
+$('about').textContent = `Version ${__APP_VERSION__} · ${__APP_COMMIT__}`
 renderInstall()
 
 // Offline support and updates. Only production builds have a service worker (pnpm build, then
