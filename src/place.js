@@ -8,6 +8,7 @@
 // Cloudflare sees for the connection stands in (worker/index.js, /api/where).
 
 import { REGIONS } from './regions.js'
+import { FUEL_UNITS } from './units.js'
 
 // The currency of a region; a currency issued by the region itself wins over a borrowed one.
 export function currencyOf(region) {
@@ -74,4 +75,23 @@ export function rulerFor(here) {
   let local = currencyOf(here)
   if (!local || local === home) local = home === 'USD' ? 'EUR' : 'USD'
   return { a: local, b: home }
+}
+
+// ---------- fuel
+//
+// The back of a ruler prices fuel: each currency per the unit its pumps sell by (CLDR, src/units.js).
+// The local currency goes by where the traveller is: dollars in Ecuador follow Ecuador's pumps.
+// Any other currency goes by its own country.
+
+export const LITRES = { liter: 1, gallon: 3.785411784, 'gallon-imperial': 4.54609 }
+export const UNIT_SHORT = { liter: 'L', gallon: 'gal', 'gallon-imperial': 'gal' }
+export const UNIT_NAME = { liter: 'litre', gallon: 'gallon', 'gallon-imperial': 'imperial gallon' }
+
+let zone // the time zone's region, looked up once
+const hereRegion = () => (zone ??= timeZoneRegion() ?? '') || null
+
+export function fuelUnit(code) {
+  const here = hereRegion()
+  const region = here && currencyOf(here) === code ? here : REGIONS[code]?.[0]
+  return FUEL_UNITS[region] ?? 'liter'
 }

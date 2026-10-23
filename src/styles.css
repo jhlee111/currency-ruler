@@ -34,6 +34,10 @@
   --glass-edge: rgb(74 28 14 / 0.14);
   --hairline: #c8261b;
   --clip: linear-gradient(90deg, #5d6167, #c9ccd1 38%, #9a9ea4 62%, #55595f);
+  /* The fuel side is printed in its own ink. The front's ticks are already red-orange here, so blue. */
+  --fuel-tick: #1f6fb2;
+  --fuel-ink: #12406b;
+  --fuel-ink-soft: #2a5d8f;
   color-scheme: light;
 }
 
@@ -66,6 +70,9 @@
   --glass-edge: rgb(251 232 222 / 0.2);
   --hairline: #ff6a55;
   --clip: linear-gradient(90deg, #3d4045, #9a9ea5 38%, #6f7379 62%, #34373b);
+  --fuel-tick: #6fb1f2;
+  --fuel-ink: #d9ecff;
+  --fuel-ink-soft: #a9cdf0;
   color-scheme: dark;
 }
 
@@ -109,6 +116,10 @@
   --hairline: #b3221a;
   /* Brass, as on an old wooden slide rule. */
   --clip: linear-gradient(90deg, #6e5220, #e2c47c 38%, #b48c42 62%, #5f461b);
+  /* Red ink for the fuel side, as slide rules printed their special scales. */
+  --fuel-tick: #a11f17;
+  --fuel-ink: #8e1a12;
+  --fuel-ink-soft: #a5372e;
   color-scheme: dark;
 }
 
@@ -263,7 +274,7 @@ button, input, select { font: inherit; color: inherit; }
   transition: opacity 0.3s ease;
 }
 .plate .tag { cursor: inherit; }
-.app.tools-hidden:not(.swiping):not(.naming) #ruler .plate { opacity: 0; }
+.app.tools-hidden:not(.swiping):not(.naming):not(.fuel) #ruler .plate { opacity: 0; } /* turned over, the names say what's priced */
 
 /* ---------- the set of rulers */
 
@@ -374,6 +385,11 @@ button, input, select { font: inherit; color: inherit; }
 .tag svg { flex: none; color: var(--tick); }
 .tag-round { width: 44px; padding: 0; justify-content: center; }
 .swap svg { transition: transform 0.35s ease; }
+.tag[hidden] { display: none; }
+/* Turned over to the fuel side: the pump lights up, and the names take the fuel side's ink. */
+.turn[aria-pressed="true"] { border-color: var(--fuel-tick); background: var(--fuel-tick); color: var(--chip-bg); }
+.turn[aria-pressed="true"] svg { color: inherit; }
+.app.fuel #ruler .plate .tag { border-color: var(--fuel-tick); color: var(--fuel-ink); }
 .swap.turned svg { transform: rotate(180deg); }
 
 .status {

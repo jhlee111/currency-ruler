@@ -5,7 +5,7 @@
 // Nothing personal is kept: no IP, no identifier. The country comes from Cloudflare's own request data.
 //
 // Each event is one data point, in fixed columns (scripts/stats.mjs reads them back):
-//   blob1 event      open · swipe · add · edit · remove · flip · type · share · install · theme · layout · rates
+//   blob1 event      open · swipe · add · edit · remove · flip · fuel · type · share · install · theme · layout · rates
 //   blob2 ruler      the pair in hand, "JPY/USD"
 //   blob3 platform   ios · android · mac · windows · other
 //   blob4 display    installed · browser · in-app:<app>
@@ -16,7 +16,7 @@
 //   double1 rulers   how many rulers the device keeps
 //   double2 first    1 for the first open of the day on that device (daily users), else 0
 
-const EVENTS = new Set(['open', 'swipe', 'add', 'edit', 'remove', 'flip', 'type', 'share', 'install', 'theme', 'layout', 'rates'])
+const EVENTS = new Set(['open', 'swipe', 'add', 'edit', 'remove', 'flip', 'fuel', 'type', 'share', 'install', 'theme', 'layout', 'rates'])
 
 const text = (v, max = 24) => (typeof v === 'string' ? v.slice(0, max) : '')
 

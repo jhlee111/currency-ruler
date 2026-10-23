@@ -5,7 +5,7 @@ import { THEMES, isTheme, resolveTheme } from './themes.js'
 import { setupInstall } from './install.js'
 import { setupShare } from './share.js'
 import { setupStats, track, trackOpen } from './stats.js'
-import { rulerFor, timeZoneRegion, networkRegion } from './place.js'
+import { rulerFor, timeZoneRegion, networkRegion, fuelUnit, LITRES, UNIT_SHORT, UNIT_NAME } from './place.js'
 import { buildTicks, tickLabel, tickStep, formatAmount, formatRate, parseAmount, niceStep } from './scale.js'
 
 // Coordinates: the ruler is a log10 axis of the left-hand currency (A), small at the top.
@@ -31,6 +31,7 @@ const els = {
   amtA: $('amt-a'),
   amtB: $('amt-b'),
   swap: $('swap'),
+  turn: $('turn'),
   ruler: $('ruler'),
   canvas: $('canvas'),
   glass: $('glass'),
@@ -78,6 +79,8 @@ const SWIPE_FLICK = 0.35 // px/ms; a quicker release moves on whatever the dista
 const ADD_PULL = 70 // px the empty place past the last ruler must be pulled to start a new one
 const SPRING = 0.0005 // stiffness (1/ms²) of the spring that settles a ruler into place
 const SPRING_DAMPING = 0.037 // 1/ms; a touch under critical, so it lands with the slightest give
+const FUEL_SPAN = 0.6 // decades the fuel side shows: pump prices sit close together
+const PUMP_USD_PER_LITRE = 1.3 // a typical pump price the world over, to open the fuel side among real ones
 const REFRESH_AFTER = 30 * 60 * 1000 // re-check the rate when the app returns after this long
 const FONT = '"B612", ui-sans-serif, system-ui, sans-serif'
 const PREFS_KEY = 'currency-ruler:prefs'
@@ -124,7 +127,9 @@ const state = {
   theme: isTheme(prefs?.theme) ? prefs.theme : 'wood', // a maple ruler on a walnut desk until chosen otherwise
   editing: null, // 'a' | 'b' while an amount field has focus
   checking: false,
+  face: 'front', // 'back' while the ruler is turned over to price fuel; money is always the front
 }
+let moneySide = null // the front's reading and zoom, kept while the ruler is turned over
 // A new device starts with a ruler for where it is: the local currency against the traveller's
 // own (src/place.js). Until rates for it are on the device, or while the network is still saying
 // where this is, a stand-in with rates holds its place (adoptFirstRuler).
@@ -179,6 +184,7 @@ function adoptFirstRuler() {
     return
   }
   if ((r.a !== f.want.a || r.b !== f.want.b) && canPair(f.want.a, f.want.b)) {
+    setFace('front')
     Object.assign(r, f.want)
     f.shown = { ...f.want }
     stopMotion()
@@ -218,8 +224,8 @@ function savePrefs() {
           current: state.current,
           a: state.a,
           b: state.b,
-          cursor: state.cursor,
-          span: state.span,
+          cursor: moneySide?.cursor ?? state.cursor,
+          span: moneySide?.span ?? state.span,
           layout: state.layout,
           theme: state.theme,
           recent: state.recent,
@@ -256,8 +262,18 @@ function pairR(a, b) {
   return Math.log10(rates[a] / rates[b])
 }
 function liveR() {
-  return pairR(state.a, state.b)
+  return pairR(state.a, state.b) + faceShift()
 }
+
+// Turned over, each side prices a unit of fuel (per litre, per gallon), so the shift between
+// the scales gains the ratio of the two units. The front has no units.
+function faceShift() {
+  return state.face === 'back' ? Math.log10(LITRES[fuelUnit(state.a)] / LITRES[fuelUnit(state.b)]) : 0
+}
+// A ruler has a fuel side only when its two countries sell fuel differently (litres and gallons).
+const hasBack = () => fuelUnit(state.a) !== fuelUnit(state.b)
+const perUnit = (code) => (state.face === 'back' ? UNIT_SHORT[fuelUnit(code)] : '')
+const plateName = (code) => CURRENCIES[code].short + (perUnit(code) ? ` / ${perUnit(code)}` : '')
 
 const readingPosA = (c) => (c.side === 'a' ? c.pos : c.pos + state.R)
 const cursorPosA = () => readingPosA(state.cursor)
@@ -267,8 +283,16 @@ const viewLo = () => cursorPosA() - state.span / 2
 // Where the ruler opens and where a double tap returns: a typical price in the pair's smaller
 // unit (¥1,000, ₩10,000). Basing it on the pair rather than the left side survives a swap.
 function home() {
+  if (state.face === 'back') return pumpPrice()
   const code = unitsPerUsd(state.a) >= unitsPerUsd(state.b) ? state.a : state.b
   return { side: code === state.a ? 'a' : 'b', pos: Math.round(Math.log10(unitsPerUsd(code))) + 1, step: null }
+}
+
+// Where the fuel side opens: a typical pump price, rounded, near enough to land among real ones.
+function pumpPrice() {
+  const v = PUMP_USD_PER_LITRE * unitsPerUsd(state.a) * LITRES[fuelUnit(state.a)]
+  const step = 10 ** (Math.floor(Math.log10(v)) - 1)
+  return { side: 'a', pos: posOf(Math.round(v / step) * step, 'a'), step }
 }
 
 // ---------- positions on the ruler
@@ -350,6 +374,7 @@ function settleR() {
 const size = { w: 0, h: 0, dpr: 1 }
 let M = metricsFor(410)
 let colors = readColors()
+let ink = colors // what draw() prints with: the front's colours, or the fuel side's
 let frame = { labelsA: [], labelsB: [] }
 
 function metricsFor(w) {
@@ -369,7 +394,14 @@ function metricsFor(w) {
 function readColors() {
   const cs = getComputedStyle(document.documentElement)
   const v = (name) => cs.getPropertyValue(name).trim()
-  return { tick: v('--tick'), ink: v('--scale-ink'), inkSoft: v('--scale-ink-soft'), paper: v('--paper'), edge: v('--ruler-edge') }
+  return {
+    tick: v('--tick'),
+    ink: v('--scale-ink'),
+    inkSoft: v('--scale-ink-soft'),
+    paper: v('--paper'),
+    edge: v('--ruler-edge'),
+    fuel: { tick: v('--fuel-tick'), ink: v('--fuel-ink'), inkSoft: v('--fuel-ink-soft') },
+  }
 }
 
 new ResizeObserver(onResize).observe(els.ruler)
@@ -410,6 +442,7 @@ function draw() {
   const gap = M.fs * 2.05
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+  ink = state.face === 'back' ? { ...colors, ...colors.fuel } : colors
 
   const ticksA = scaleTicks('a', lo, hi, k, gap)
   const ticksB = scaleTicks('b', lo - state.R, hi - state.R, k, gap)
@@ -461,7 +494,7 @@ function drawSide(ticks, offset, right, cur, k, lo) {
   const middle = state.layout === 'middle'
   const origin = middle ? w / 2 : right ? w : 0
   const dir = (right ? -1 : 1) * (middle ? -1 : 1)
-  ctx.strokeStyle = colors.tick
+  ctx.strokeStyle = ink.tick
   for (const t of ticks) {
     const y = (t.log + offset - lo) * k
     if (y < -4 || y > h + 4) continue
@@ -488,7 +521,7 @@ function drawSide(ticks, offset, right, cur, k, lo) {
     if (y < -30 || y > h + 30) continue
     if (Math.abs(y - h / 2) < 27) continue // under the reading line's band; its pills show the amount
     ctx.font = `${big ? 700 : 400} ${fs * dpr}px ${FONT}`
-    ctx.fillStyle = big ? colors.ink : colors.inkSoft
+    ctx.fillStyle = big ? ink.ink : ink.inkSoft
     ctx.fillText(tickText(t, cur), x, y * dpr)
   }
 }
@@ -508,7 +541,7 @@ function drawRulerStart(lo, k) {
 function drawSpine() {
   const { w, h, dpr } = size
   const lw = Math.max(1, Math.round(1.5 * dpr))
-  ctx.fillStyle = colors.tick
+  ctx.fillStyle = ink.tick
   ctx.fillRect(Math.round((w / 2) * dpr - lw / 2), 0, lw, h * dpr)
 }
 
@@ -529,6 +562,7 @@ function readings() {
   const B = CURRENCIES[state.b]
   const c = state.cursor
   const pa = cursorPosA()
+  // On the fuel side the units are on the names, which stay up; the amounts stay short enough to fit.
   return {
     a: formatAmount(valueAt(pa, 'a'), A, c.side === 'a' ? c.step : null),
     b: formatAmount(valueAt(pa - state.R, 'b'), B, c.side === 'b' ? c.step : null),
@@ -623,16 +657,24 @@ function syncCurrencyUi() {
   const A = CURRENCIES[state.a]
   const B = CURRENCIES[state.b]
   const n = state.rulers.length
-  setText(els.nameA, A.short)
-  setText(els.nameB, B.short)
+  const back = state.face === 'back'
+  const per = (code) => (back ? ` per ${UNIT_NAME[fuelUnit(code)]}` : '')
+  setText(els.nameA, plateName(state.a))
+  setText(els.nameB, plateName(state.b))
+  els.turn.hidden = !hasBack()
+  els.turn.setAttribute('aria-pressed', String(back))
+  els.turn.setAttribute(
+    'aria-label',
+    back ? 'Turn back to money' : `Turn over to fuel prices, per ${UNIT_NAME[fuelUnit(state.a)]} and per ${UNIT_NAME[fuelUnit(state.b)]}`,
+  )
   els.ruler.setAttribute(
     'aria-label',
-    `${A.name} and ${B.name} ruler${n > 1 ? `, ${state.current + 1} of ${n}` : ''}. Drag to slide the scale under the reading line, ` +
+    `${back ? 'Fuel prices: ' : ''}${A.name}${per(state.a)} and ${B.name}${per(state.b)} ruler${n > 1 ? `, ${state.current + 1} of ${n}` : ''}. Drag to slide the scale under the reading line, ` +
       `swipe sideways for your other rulers, pinch to zoom, double-tap to reset. Up and down arrows step the reading, ` +
       `left and right switch rulers, plus and minus zoom, 0 resets.`,
   )
-  els.amtA.setAttribute('aria-label', `Amount in ${A.name}`)
-  els.amtB.setAttribute('aria-label', `Amount in ${B.name}`)
+  els.amtA.setAttribute('aria-label', `Amount in ${A.name}${per(state.a)}`)
+  els.amtB.setAttribute('aria-label', `Amount in ${B.name}${per(state.b)}`)
 }
 
 // ---------- moving the scale
@@ -748,7 +790,7 @@ function resetView() {
   const to = home()
   const target = readingPosA(to)
   motion = tween(320, easeOutCubic, (e) => {
-    state.span = lerp(fromSpan, HOME_SPAN, e)
+    state.span = lerp(fromSpan, state.face === 'back' ? FUEL_SPAN : HOME_SPAN, e)
     const pos = lerp(fromPos, target, e)
     state.cursor = { side: 'a', pos, step: niceStep(perPixel(pos, 'a')) }
   }, () => {
@@ -1144,6 +1186,15 @@ function neighbour(dir) {
 
 // The price on the line in each currency of the ruler in hand: the reading first, with its step.
 function price() {
+  if (state.face === 'back') {
+    const turned = { face: state.face, R: state.R, cursor: state.cursor }
+    Object.assign(state, { face: 'front', R: pairR(state.a, state.b), cursor: moneySide.cursor })
+    try {
+      return price()
+    } finally {
+      Object.assign(state, turned)
+    }
+  }
   const c = state.cursor
   const other = c.side === 'a' ? 'b' : 'a'
   const pa = cursorPosA()
@@ -1181,11 +1232,13 @@ function paintGhost(g, holds) {
   g.el.classList.toggle('middle', state.layout === 'middle')
   const r = state.rulers[holds]
   const p = price()
-  const inHand = { a: state.a, b: state.b, R: state.R, cursor: state.cursor }
-  const live = { ctx, frame }
+  const inHand = { a: state.a, b: state.b, R: state.R, cursor: state.cursor, face: state.face }
+  const live = { ctx, frame, ink }
   try {
-    Object.assign(state, { a: r.a, b: r.b, R: pairR(r.a, r.b) })
-    state.cursor = carry(p)
+    if (holds !== state.current) {
+      Object.assign(state, { a: r.a, b: r.b, R: pairR(r.a, r.b), face: 'front' })
+      state.cursor = carry(p)
+    }
     ctx = g.ctx
     draw()
     const amounts = readings()
@@ -1193,10 +1246,10 @@ function paintGhost(g, holds) {
       setText(pill, text)
       pill.style.width = pillWidth(text)
     }
-    setText(g.nameA, CURRENCIES[r.a].short)
-    setText(g.nameB, CURRENCIES[r.b].short)
+    setText(g.nameA, plateName(r.a))
+    setText(g.nameB, plateName(r.b))
   } finally {
-    ;({ ctx, frame } = live)
+    ;({ ctx, frame, ink } = live)
     Object.assign(state, inHand)
   }
 }
@@ -1309,6 +1362,7 @@ function putDown() {
 
 // Takes up ruler i of the set, bringing the price on the line along.
 function takeUp(i) {
+  setFace('front')
   const p = price()
   stopMotion()
   state.current = i
@@ -1375,6 +1429,7 @@ function setRuler(i, a, b) {
   if (!r || (r.a === a && r.b === b) || !canPair(a, b)) return
   Object.assign(r, { a, b })
   if (i === state.current) {
+    setFace('front')
     const p = price()
     stopMotion()
     Object.assign(state, { a, b })
@@ -1389,22 +1444,58 @@ function setRuler(i, a, b) {
 }
 
 let flipping = false
-async function swapSides() {
-  if (flipping || deck.raf) return // one motion at a time: a ruler is still sliding into place
-  els.swap.classList.toggle('turned')
-  track('flip', 'ruler')
+// One turn of the ruler: a quarter turn out, the change made out of sight, a quarter turn back.
+// Sideways (Y) swaps the sides; end over end (X) turns it over to the fuel side and back.
+async function flipRuler(axis, change) {
   if (reduceMotion.matches || !els.ruler.animate) {
-    applySwap()
+    change()
+    render()
     return
   }
   flipping = true
   const turn = (from, to, duration, easing) =>
-    els.ruler.animate([{ transform: `perspective(1400px) rotateY(${from}deg)` }, { transform: `perspective(1400px) rotateY(${to}deg)` }], { duration, easing }).finished
+    els.ruler.animate([{ transform: `perspective(1400px) rotate${axis}(${from}deg)` }, { transform: `perspective(1400px) rotate${axis}(${to}deg)` }], { duration, easing }).finished
   await turn(0, 90, 140, 'ease-in')
-  applySwap()
+  change()
   render()
   await turn(-90, 0, 220, 'cubic-bezier(.2,.8,.3,1)')
   flipping = false
+}
+
+function swapSides() {
+  if (flipping || deck.raf) return // one motion at a time: a ruler is still sliding into place
+  els.swap.classList.toggle('turned')
+  track('flip', 'ruler')
+  flipRuler('Y', applySwap)
+}
+
+function turnOver() {
+  if (flipping || deck.raf) return
+  const to = state.face === 'back' ? 'front' : 'back'
+  track('fuel', to === 'back' ? 'on' : 'off')
+  flipRuler('X', () => setFace(to))
+}
+els.turn.addEventListener('click', turnOver)
+
+// The fuel side opens on a typical pump price, zoomed to where pump prices sit; the money side
+// comes back to the reading and zoom it was left at.
+function setFace(face) {
+  if (face === state.face || (face === 'back' && !hasBack())) return
+  stopMotion()
+  if (face === 'back') moneySide = { cursor: state.cursor, span: state.span }
+  state.face = face
+  settleR()
+  if (face === 'back') {
+    state.cursor = pumpPrice()
+    state.span = FUEL_SPAN
+  } else {
+    ;({ cursor: state.cursor, span: state.span } = moneySide)
+    moneySide = null
+  }
+  els.app.classList.toggle('fuel', face === 'back')
+  syncCurrencyUi()
+  requestRender()
+  flashNames()
 }
 
 // The picture stays put: the same amounts sit at the same heights, only the sides trade places.
@@ -1414,7 +1505,9 @@ function applySwap() {
   const R = state.R
   ;[state.a, state.b] = [state.b, state.a]
   state.R = -R
-  state.cursor = { ...state.cursor, side: state.cursor.side === 'a' ? 'b' : 'a' }
+  const across = (c) => ({ ...c, side: c.side === 'a' ? 'b' : 'a' })
+  state.cursor = across(state.cursor)
+  if (moneySide) moneySide.cursor = across(moneySide.cursor)
   storeRuler()
   syncCurrencyUi()
   savePrefs()
