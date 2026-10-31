@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>기타 튜너</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: single column instrument panel — gauge on top, strings below, controls last */
+:root{
+  --bg:#f1f0eb; --surface:#fbfaf7; --ink:#1c2427; --muted:#66706f; --line:#d9d8d0;
+  --accent:#0d6e78; --good:#2c8a4b; --warn:#c0532a;
+  --font-body:"IBM Plex Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+  --font-num:"IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#111618; --surface:#192023; --ink:#e7ebea; --muted:#94a09f; --line:#2b3437;
+    --accent:#4db6c1; --good:#56c27a; --warn:#ec8a5d; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111618; --surface:#192023; --ink:#e7ebea; --muted:#94a09f; --line:#2b3437;
+  --accent:#4db6c1; --good:#56c27a; --warn:#ec8a5d; color-scheme: dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body)}
+main{max-width:520px;margin:0 auto;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-size:22px;margin:0;font-weight:700;text-wrap:balance}
+select,button{font:inherit;color:inherit}
+select{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+button{cursor:pointer;border-radius:10px;border:1px solid var(--line);background:var(--surface);padding:10px 14px}
+button:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px}
+.gauge-wrap{display:flex;flex-direction:column;align-items:center;gap:4px}
+svg.gauge{width:100%;max-width:420px;height:auto;display:block}
+.tick{stroke:var(--muted)} .tick.major{stroke:var(--ink)}
+.tlabel{fill:var(--muted);font-family:var(--font-num);font-size:11px}
+.zone{fill:var(--good);opacity:.18}
+#needle{transform-origin:200px 200px;transition:transform .12s linear}
+#needle line{stroke:var(--warn);stroke-width:3;stroke-linecap:round}
+.in-tune #needle line{stroke:var(--good)}
+.idle #needle line{stroke:var(--muted)}
+#hub{fill:var(--ink)}
+.readout{display:flex;align-items:baseline;gap:14px;justify-content:center;margin-top:-8px}
+#note{font-family:var(--font-num);font-size:64px;font-weight:600;line-height:1}
+#note sub{font-size:24px;font-weight:400;color:var(--muted);vertical-align:baseline}
+#cents{font-family:var(--font-num);font-size:22px;font-variant-numeric:tabular-nums;min-width:5ch}
+#status{font-weight:500;font-size:17px;min-height:1.4em;text-align:center}
+.in-tune #status{color:var(--good)} .flat #status,.sharp #status{color:var(--warn)}
+#heard{color:var(--muted);font-family:var(--font-num);font-size:13px;font-variant-numeric:tabular-nums;text-align:center}
+.strings{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.str{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0;position:relative}
+.str b{font-family:var(--font-num);font-size:20px}
+.str small{color:var(--muted);font-size:11px}
+.str[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent)}
+.str.done::after{content:"✓";position:absolute;top:3px;right:6px;font-size:12px;color:var(--good)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row > *{flex:1 1 auto}
+.primary{background:var(--accent);border-color:var(--accent);color:var(--surface);font-weight:700}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex:0 0 auto}
+.seg button{border:0;border-radius:0;padding:8px 12px;background:transparent}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--surface)}
+.cal{display:flex;align-items:center;gap:6px;flex:0 0 auto;font-family:var(--font-num);font-size:14px}
+.cal button{padding:6px 10px}
+.note-box{font-size:14px;line-height:1.55;color:var(--ink);border-left:4px solid var(--warn);padding:10px 12px;background:var(--bg);border-radius:6px}
+.note-box[hidden]{display:none}
+.label{font-size:13px;color:var(--muted);margin:0 0 8px}
+input[type=file]{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+@media (prefers-reduced-motion: reduce){#needle{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>기타 튜너</h1>
+    <label class="sr" for="tuning" style="position:absolute;left:-9999px">튜닝</label>
+    <select id="tuning"></select>
+  </header>
+
+  <section class="panel idle" id="meter" aria-live="polite">
+    <div class="gauge-wrap">
+      <svg class="gauge" viewBox="0 0 400 230" role="img" aria-label="음정 게이지, 왼쪽이 낮음, 오른쪽이 높음">
+        <g id="ticks"></g>
+        <g id="needle"><line x1="200" y1="200" x2="200" y2="48"/></g>
+        <circle id="hub" cx="200" cy="200" r="7"/>
+      </svg>
+      <div class="readout"><div id="note">A<sub>2</sub></div><div id="cents">±0</div></div>
+      <div id="status">기타 줄을 튕겨 보세요</div>
+      <div id="heard">마이크 꺼짐 · 기준 A4 = 440 Hz</div>
+    </div>
+  </section>
+
+  <section>
+    <p class="label">줄 (6번 → 1번) · 누르면 그 줄로 고정</p>
+    <div class="strings" id="strings"></div>
+  </section>
+
+  <section class="panel" style="display:flex;flex-direction:column;gap:12px">
+    <div class="row">
+      <button class="primary" id="micBtn">마이크 켜기</button>
+      <button id="recBtn">녹음해서 측정</button>
+      <input type="file" id="recInput" accept="audio/*" capture>
+    </div>
+    <div class="note-box" id="notice" hidden></div>
+    <div class="row">
+      <div class="seg" role="group" aria-label="줄 선택 방식">
+        <button id="autoBtn" aria-pressed="true">자동</button>
+        <button id="manualBtn" aria-pressed="false">수동</button>
+      </div>
+      <button id="refBtn">기준음 듣기</button>
+      <div class="cal" aria-label="기준 음높이">
+        <button id="calDown" aria-label="기준음 낮추기">−</button>
+        <span id="calVal">440</span>
+        <button id="calUp" aria-label="기준음 높이기">+</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const TUNINGS = {
+    standard:{name:'표준 (EADGBE)',notes:['E2','A2','D3','G3','B3','E4']},
+    halfdown:{name:'반음 다운 (E♭)',notes:['Eb2','Ab2','Db3','Gb3','Bb3','Eb4']},
+    dropd:{name:'드롭 D',notes:['D2','A2','D3','G3','B3','E4']},
+    dropc:{name:'드롭 C',notes:['C2','G2','C3','F3','A3','D4']},
+    dadgad:{name:'DADGAD',notes:['D2','A2','D3','G3','A3','D4']},
+    openg:{name:'오픈 G',notes:['D2','G2','D3','G3','B3','D4']},
+    opend:{name:'오픈 D',notes:['D2','A2','D3','F#3','A3','D4']},
+  };
+  const SHARP = ['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'];
+  const FLAT  = ['C','D♭','D','E♭','E','F','G♭','G','A♭','A','B♭','B'];
+  const LETTER = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
+
+  const $ = id => document.getElementById(id);
+  const state = { tuning:'standard', a4:440, auto:true, target:1, done:new Set(), listening:false };
+  let ctx=null, analyser=null, stream=null, raf=0, buf=null;
+  let history=[], smoothCents=0, inTuneSince=0;
+
+  const store = {
+    get(k){ try{return localStorage.getItem(k)}catch(e){return null} },
+    set(k,v){ try{localStorage.setItem(k,v)}catch(e){} }
+  };
+
+  function parse(n){
+    const m = n.match(/^([A-G])([#b]?)(\d)$/);
+    let pc = LETTER[m[1]] + (m[2]==='#'?1:m[2]==='b'?-1:0);
+    return { midi:(+m[3]+1)*12+pc, flat:m[2]==='b', octave:+m[3], label:m[1]+(m[2]==='#'?'♯':m[2]==='b'?'♭':'') };
+  }
+  const midiFreq = m => state.a4*Math.pow(2,(m-69)/12);
+  const strings = () => TUNINGS[state.tuning].notes.map(parse);
+
+  // ---------- UI build ----------
+  const sel = $('tuning');
+  for(const [k,t] of Object.entries(TUNINGS)){ const o=document.createElement('option'); o.value=k; o.textContent=t.name; sel.appendChild(o); }
+
+  function buildTicks(){
+    const g=$('ticks'); let s='';
+    const cx=200, cy=200, r=160;
+    const ang = c => (c/50)*60*Math.PI/180;
+    // in-tune zone ±3 cents
+    const a1=ang(-5), a2=ang(5);
+    s+=`<path class="zone" d="M${cx} ${cy} L${cx+r*Math.sin(a1)} ${cy-r*Math.cos(a1)} A${r} ${r} 0 0 1 ${cx+r*Math.sin(a2)} ${cy-r*Math.cos(a2)} Z"/>`;
+    for(let c=-50;c<=50;c+=5){
+      const a=ang(c), major=c%25===0, inner=major?r-18:r-10;
+      s+=`<line class="tick${major?' major':''}" stroke-width="${major?2:1}" x1="${cx+inner*Math.sin(a)}" y1="${cy-inner*Math.cos(a)}" x2="${cx+r*Math.sin(a)}" y2="${cy-r*Math.cos(a)}"/>`;
+      if(major){ const lr=r+14; s+=`<text class="tlabel" text-anchor="middle" x="${cx+lr*Math.sin(a)}" y="${cy-lr*Math.cos(a)+4}">${c>0?'+'+c:c}</text>`; }
+    }
+    s+=`<text class="tlabel" x="34" y="222">♭ 낮음</text><text class="tlabel" text-anchor="end" x="366" y="222">높음 ♯</text>`;
+    g.innerHTML=s;
+  }
+
+  function buildStrings(){
+    const wrap=$('strings'); wrap.innerHTML='';
+    strings().forEach((s,i)=>{
+      const b=document.createElement('button');
+      b.className='str'+(state.done.has(i)?' done':''); b.id='str'+i;
+      b.setAttribute('aria-pressed', String(i===state.target));
+      b.setAttribute('aria-label', `${6-i}번 줄 ${s.label}${s.octave}`);
+      b.innerHTML=`<b>${s.label}</b><small>${6-i}번</small>`;
+      b.onclick=()=>{ state.target=i; setAuto(false); markTarget(); showTarget(); };
+      wrap.appendChild(b);
+    });
+  }
+  function markTarget(){ strings().forEach((_,i)=>{ const b=$('str'+i); if(b) b.setAttribute('aria-pressed', String(i===state.target)); }); }
+  function showTarget(){ const s=strings()[state.target]; $('note').innerHTML=`${s.label}<sub>${s.octave}</sub>`; }
+
+  function setAuto(v){ state.auto=v; $('autoBtn').setAttribute('aria-pressed',String(v)); $('manualBtn').setAttribute('aria-pressed',String(!v)); }
+
+  function setMeter(cls){ $('meter').className='panel '+cls; }
+  function setNeedle(c){ const cl=Math.max(-50,Math.min(50,c)); $('needle').style.transform=`rotate(${cl/50*60}deg)`; }
+
+  // ---------- pitch detection (YIN) ----------
+  function detect(b, sr){
+    const n=b.length, half=n>>1;
+    let rms=0; for(let i=0;i<n;i++) rms+=b[i]*b[i];
+    rms=Math.sqrt(rms/n); if(rms<0.008) return null;
+    const minTau=Math.floor(sr/1100), maxTau=Math.min(half-2, Math.floor(sr/55));
+    const d=new Float32Array(maxTau+2);
+    for(let t=1;t<=maxTau+1;t++){ let s=0; for(let i=0;i<half;i++){ const x=b[i]-b[i+t]; s+=x*x; } d[t]=s; }
+    let run=0; d[0]=1;
+    for(let t=1;t<=maxTau+1;t++){ run+=d[t]; d[t]= run>0 ? d[t]*t/run : 1; }
+    let tau=-1;
+    for(let t=minTau;t<=maxTau;t++){ if(d[t]<0.15){ while(t+1<=maxTau && d[t+1]<d[t]) t++; tau=t; break; } }
+    if(tau<0) return null;
+    const a=d[tau-1], c0=d[tau], c=d[tau+1], den=a+c-2*c0;
+    const better = den ? tau+(a-c)/(2*den) : tau;
+    return { freq: sr/better, clarity: 1-c0, rms };
+  }
+
+  // Interpret a frequency against the tuning; returns display info
+  function interpret(f){
+    const ss=strings(); let idx=state.target;
+    if(state.auto){
+      let best=Infinity;
+      ss.forEach((s,i)=>{ const c=Math.abs(1200*Math.log2(f/midiFreq(s.midi))); if(c<best){best=c; idx=i;} });
+    }
+    const target=ss[idx], cents=1200*Math.log2(f/midiFreq(target.midi));
+    const nm=Math.round(69+12*Math.log2(f/state.a4));
+    const heardName=(target.flat?FLAT:SHARP)[((nm%12)+12)%12]+(Math.floor(nm/12)-1);
+    return { idx, target, cents, heardName };
+  }
+
+  function render(f, cents, info, final){
+    if(info.idx!==state.target){ state.target=info.idx; markTarget(); }
+    showTarget();
+    const sign = cents>0?'+':cents<0?'−':'±';
+    $('cents').textContent = sign+Math.abs(Math.round(cents));
+    $('heard').textContent = `들리는 음 ${info.heardName} · ${f.toFixed(1)} Hz · 기준 A4 = ${state.a4} Hz`;
+    setNeedle(cents);
+    const a=Math.abs(cents);
+    if(a<=3){
+      setMeter('in-tune'); $('status').textContent='맞았어요';
+      if(final || (inTuneSince && performance.now()-inTuneSince>600)){ if(!state.done.has(info.idx)){ state.done.add(info.idx); $('str'+info.idx)?.classList.add('done'); } }
+      if(!inTuneSince) inTuneSince=performance.now();
+    } else {
+      inTuneSince=0;
+      setMeter(cents<0?'flat':'sharp');
+      const more = a>50 ? '많이 ' : '';
+      $('status').textContent = cents<0 ? `${more}낮아요 · 줄을 조이세요` : `${more}높아요 · 줄을 푸세요`;
+    }
+  }
+
+  function loop(){
+    raf=requestAnimationFrame(loop);
+    analyser.getFloatTimeDomainData(buf);
+    const r=detect(buf, ctx.sampleRate);
+    if(!r || r.clarity<0.85 || r.freq<55 || r.freq>1100){
+      if(history.length && performance.now()-history.lastAt>700){ history=[]; setMeter('idle'); setNeedle(0); $('status').textContent='기타 줄을 튕겨 보세요'; inTuneSince=0; }
+      return;
+    }
+    history.push(r.freq); if(history.length>7) history.shift(); history.lastAt=performance.now();
+    const med=[...history].sort((a,b)=>a-b)[history.length>>1];
+    const info=interpret(med);
+    if(Math.abs(info.cents-smoothCents)>25) smoothCents=info.cents; else smoothCents+= (info.cents-smoothCents)*0.35;
+    render(med, smoothCents, info, false);
+  }
+
+  function getCtx(){ if(!ctx){ const AC=window.AudioContext||window.webkitAudioContext; ctx=new AC(); } if(ctx.state==='suspended') ctx.resume(); return ctx; }
+
+  function notice(html){ const n=$('notice'); n.innerHTML=html; n.hidden=!html; }
+
+  async function startMic(){
+    if(state.listening){ stopMic(); return; }
+    try{
+      if(!navigator.mediaDevices?.getUserMedia) throw new Error('unsupported');
+      stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+      getCtx();
+      const src=ctx.createMediaStreamSource(stream);
+      analyser=ctx.createAnalyser(); analyser.fftSize=4096; buf=new Float32Array(analyser.fftSize);
+      src.connect(analyser);
+      state.listening=true; $('micBtn').textContent='마이크 끄기'; notice('');
+      $('heard').textContent=`듣는 중 · 기준 A4 = ${state.a4} Hz`;
+      loop();
+    }catch(e){
+      const framed = window.self!==window.top;
+      notice(framed
+        ? '이 화면에서는 마이크를 쓸 수 없어요. <b>녹음해서 측정</b>을 누르고 줄을 한 번 튕긴 소리를 2~3초 녹음하면 음정을 보여 드려요. 실시간 튜닝은 이 페이지를 브라우저에서 직접 열면 돼요.'
+        : '마이크를 켜지 못했어요. 브라우저 주소창의 권한 설정에서 마이크를 허용한 뒤 다시 눌러 주세요. 안 되면 <b>녹음해서 측정</b>을 써 보세요.');
+    }
+  }
+  function stopMic(){
+    cancelAnimationFrame(raf); stream?.getTracks().forEach(t=>t.stop());
+    state.listening=false; $('micBtn').textContent='마이크 켜기';
+    setMeter('idle'); setNeedle(0); $('status').textContent='기타 줄을 튕겨 보세요';
+    $('heard').textContent=`마이크 꺼짐 · 기준 A4 = ${state.a4} Hz`;
+  }
+
+  // ---------- record & analyze fallback ----------
+  async function analyzeFile(file){
+    if(!file) return;
+    $('status').textContent='분석 중…'; setMeter('idle');
+    try{
+      const ac=getCtx();
+      const ab=await file.arrayBuffer();
+      const audio=await new Promise((res,rej)=>{ const p=ac.decodeAudioData(ab,res,rej); if(p&&p.catch) p.catch(rej); });
+      const data=audio.getChannelData(0), sr=audio.sampleRate, N=4096, hop=2048;
+      let peak=0; for(let i=0;i<data.length;i++) peak=Math.max(peak,Math.abs(data[i]));
+      const freqs=[]; const w=new Float32Array(N);
+      for(let s=Math.floor(sr*0.15); s+N<data.length; s+=hop){
+        let e=0; for(let i=0;i<N;i++){ w[i]=data[s+i]; e=Math.max(e,Math.abs(w[i])); }
+        if(e<peak*0.15) continue;
+        const r=detect(w,sr); if(r && r.clarity>0.85 && r.freq>55 && r.freq<1100) freqs.push(r.freq);
+      }
+      if(freqs.length<2) throw new Error('nopitch');
+      freqs.sort((a,b)=>a-b);
+      const f=freqs[freqs.length>>1];
+      const info=interpret(f);
+      render(f, info.cents, info, true);
+      notice(`녹음 결과예요. 줄을 ${info.cents<-3?'조인':info.cents>3?'푼':'건드린'} 뒤 다시 녹음해서 확인하세요.`);
+    }catch(e){
+      setMeter('idle'); setNeedle(0); $('status').textContent='음정을 찾지 못했어요';
+      notice(e.message==='nopitch'
+        ? '녹음에서 또렷한 음을 찾지 못했어요. 한 줄만 세게 튕기고 소리가 울리는 동안 2~3초 녹음해 주세요.'
+        : '이 녹음 파일 형식은 열 수 없어요. 다른 녹음 앱이나 m4a·wav 형식으로 다시 시도해 주세요.');
+    }
+    $('recInput').value='';
+  }
+
+  // ---------- reference tone ----------
+  function playRef(){
+    const ac=getCtx(), s=strings()[state.target], f=midiFreq(s.midi), t=ac.currentTime;
+    const g=ac.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.35,t+0.01); g.gain.exponentialRampToValueAtTime(0.0001,t+2.5);
+    const lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.setValueAtTime(f*8,t); lp.frequency.exponentialRampToValueAtTime(f*2,t+1.5);
+    [1,2,3].forEach((h,i)=>{ const o=ac.createOscillator(); o.type=i?'sine':'triangle'; o.frequency.value=f*h;
+      const hg=ac.createGain(); hg.gain.value=[1,.4,.2][i]; o.connect(hg).connect(lp); o.start(t); o.stop(t+2.6); });
+    lp.connect(g).connect(ac.destination);
+  }
+
+  // ---------- wiring ----------
+  function setTuning(k){ state.tuning=k; state.done.clear(); state.target=Math.min(state.target,5); buildStrings(); showTarget(); store.set('tuner.tuning',k); }
+  sel.onchange=()=>setTuning(sel.value);
+  $('micBtn').onclick=startMic;
+  $('recBtn').onclick=()=>$('recInput').click();
+  $('recInput').onchange=e=>analyzeFile(e.target.files[0]);
+  $('autoBtn').onclick=()=>setAuto(true);
+  $('manualBtn').onclick=()=>setAuto(false);
+  $('refBtn').onclick=()=>{ try{ playRef(); }catch(e){ notice('이 화면에서는 소리를 재생할 수 없어요.'); } };
+  function setCal(v){ state.a4=Math.max(430,Math.min(450,v)); $('calVal').textContent=state.a4; $('heard').textContent=`${state.listening?'듣는 중':'마이크 꺼짐'} · 기준 A4 = ${state.a4} Hz`; store.set('tuner.a4',state.a4); }
+  $('calDown').onclick=()=>setCal(state.a4-1);
+  $('calUp').onclick=()=>setCal(state.a4+1);
+
+  const savedT=store.get('tuner.tuning'); if(savedT && TUNINGS[savedT]) state.tuning=savedT;
+  const savedA=+store.get('tuner.a4'); if(savedA>=430 && savedA<=450) state.a4=savedA;
+  sel.value=state.tuning; $('calVal').textContent=state.a4;
+  $('heard').textContent=`마이크 꺼짐 · 기준 A4 = ${state.a4} Hz`;
+  buildTicks(); buildStrings(); showTarget(); setNeedle(0);
+})();
+</script>
+</body>
+</html>
